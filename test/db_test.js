@@ -177,7 +177,7 @@ describe("createAdapter", () => {
     it("should handle invalid JSON payload", () => {
         adapter.pool(conn => {
             conn.execute(
-                `INSERT INTO tasks (name, type, status, next_run_time, payload) 
+                `INSERT INTO dcron_tasks (name, type, status, next_run_time, payload) 
                 VALUES ('invalid_json', 'async', 'pending', 0, '{invalid}')`
             );
         });
