@@ -3,16 +3,17 @@ test.setup();
 
 const db = require('db');
 const coroutine = require('coroutine');
-const { DBAdapter, TaskManager } = require('..');
+const { createAdapter, TaskManager } = require('..');
 const Pool = require('fib-pool');
+const config = require('./config.js');
 
 function createDBConn() {
-    return db.open("sqlite:test.db");
+    return db.open(config.dbConnection);
 }
 
 describe("TaskManager DB Connection Options", () => {
     it("should initialize and get task with a connection string", () => {
-        const taskManager = new TaskManager({ dbConnection: 'sqlite:test.db' });
+        const taskManager = new TaskManager({ dbConnection: config.dbConnection });
         taskManager.db.setup();
         taskManager.db.close();
     });
@@ -30,17 +31,20 @@ describe("TaskManager DB Connection Options", () => {
             destroy: conn => conn.close(),
             maxsize: 5
         });
-        const taskManager = new TaskManager({ dbConnection: pool });
+        const taskManager = new TaskManager({
+            dbConnection: pool,
+            dbType: config.dbConnection.split(":")[0]
+        });
         taskManager.db.setup();
         taskManager.db.close();
     });
 });
 
-describe("DBAdapter", () => {
+describe("createAdapter", () => {
     let adapter;
 
     beforeEach(() => {
-        adapter = new DBAdapter("sqlite:test.db");
+        adapter = createAdapter(config.dbConnection);
         adapter.setup();
         adapter.clearTasks();
     });
@@ -221,7 +225,7 @@ describe("DBAdapter", () => {
     });
 
     it("should handle connection pool timeout", () => {
-        const smallPoolAdapter = new DBAdapter("sqlite:test.db", 1);
+        const smallPoolAdapter = createAdapter(config.dbConnection, 1);
         smallPoolAdapter.clearTasks();
 
         const fibers = [];

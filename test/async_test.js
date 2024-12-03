@@ -1,9 +1,9 @@
 const test = require('test');
-const assert = require('assert');
+test.setup();
+
 const coroutine = require('coroutine');
 const { TaskManager } = require('..');
-
-test.setup();
+const config = require('./config.js');
 
 describe('Async Tasks', () => {
     let db;
@@ -11,7 +11,7 @@ describe('Async Tasks', () => {
 
     beforeEach(() => {
         taskManager = new TaskManager({
-            dbConnection: 'sqlite:test.db',
+            dbConnection: config.dbConnection,
             poll_interval: 100,
             max_retries: 2,
             max_concurrent_tasks: 3
@@ -63,12 +63,12 @@ describe('Async Tasks', () => {
 
         const taskId = taskManager.async('failing_task', {}, { max_retries: 2 });
 
-        coroutine.sleep(4000);
+        coroutine.sleep(5000);
 
         const task = taskManager.getTask(taskId);
         assert.equal(task.status, 'permanently_failed');
         assert.equal(task.error, 'Task failed');
-        assert.equal(attempts, 3); 
+        assert.equal(attempts, 3);
     });
 
     it('should handle task timeout', () => {
@@ -90,7 +90,9 @@ describe('Async Tasks', () => {
             coroutine.sleep(100);
         }
 
-        coroutine.sleep(2000);
+        while (taskManager.getTask(taskId).status !== 'permanently_failed') {
+            coroutine.sleep(100);
+        }
 
         const task = taskManager.getTask(taskId);
         assert.equal(task.status, 'permanently_failed');
@@ -98,12 +100,12 @@ describe('Async Tasks', () => {
 
     it('should handle concurrent tasks', () => {
         const results = [];
-        const maxTasks = 3; 
+        const maxTasks = 3;
         let completed = 0;
 
         taskManager.use('concurrent_task', (task) => {
             results.push(task.id);
-            coroutine.sleep(500); 
+            coroutine.sleep(500);
             completed++;
             return { taskId: task.id };
         });
@@ -119,7 +121,7 @@ describe('Async Tasks', () => {
         while (completed < maxTasks) {
             coroutine.sleep(100);
         }
-        coroutine.sleep(100);
+        coroutine.sleep(500);
 
         assert.equal(results.length, maxTasks);
 
@@ -140,16 +142,18 @@ describe('Async Tasks', () => {
         });
 
         taskManager.start();
+        coroutine.sleep(100);
 
-        coroutine.sleep(1);
-
+        taskManager.pause();
         const lowPriorityId = taskManager.async('priority_task', {}, { priority: 0, max_retries: 0 });
         const highPriorityId = taskManager.async('priority_task', {}, { priority: 10, max_retries: 0 });
         const mediumPriorityId = taskManager.async('priority_task', {}, { priority: 5, max_retries: 0 });
+        taskManager.resume();
 
         while (completed < 3) {
             coroutine.sleep(100);
         }
+        coroutine.sleep(1000);
 
         assert.equal(executionOrder[0], highPriorityId);
         assert.equal(executionOrder[1], mediumPriorityId);
@@ -165,10 +169,13 @@ describe('Async Tasks', () => {
         });
 
         taskManager.start();
+        coroutine.sleep(100);
 
-        taskManager.async('test', { id: 1 }, { priority: 1, delay: 2 });
-        taskManager.async('test', { id: 2 }, { priority: 2, delay: 1 });
-        taskManager.async('test', { id: 3 }, { priority: 1, delay: 1 });
+        taskManager.pause();
+        taskManager.async('test', { id: 1 }, { priority: 1, delay: 5 });
+        taskManager.async('test', { id: 2 }, { priority: 2, delay: 3 });
+        taskManager.async('test', { id: 3 }, { priority: 1, delay: 3 });
+        taskManager.resume();
 
         while (executed.length < 3) {
             coroutine.sleep(100);
@@ -180,7 +187,7 @@ describe('Async Tasks', () => {
     it('should retrieve a task by ID', () => {
         const payload = { data: 'test_data' };
 
-        taskManager.use('test_task', (task) => {});
+        taskManager.use('test_task', (task) => { });
 
         taskManager.start();
 
@@ -197,7 +204,7 @@ describe('Async Tasks', () => {
         const payload1 = { data: 'test_data_1' };
         const payload2 = { data: 'test_data_2' };
 
-        taskManager.use('test_task', (task) => {});
+        taskManager.use('test_task', (task) => { });
 
         taskManager.start();
 
@@ -215,8 +222,8 @@ describe('Async Tasks', () => {
         const payload1 = { data: 'test_data_1' };
         const payload2 = { data: 'test_data_2' };
 
-        taskManager.use('test_task_1', (task) => {});
-        taskManager.use('test_task_2', (task) => {});
+        taskManager.use('test_task_1', (task) => { });
+        taskManager.use('test_task_2', (task) => { });
 
         taskManager.start();
 
@@ -236,7 +243,7 @@ describe('Async Tasks', () => {
         const payload1 = { data: 'test_data_1' };
         const payload2 = { data: 'test_data_2' };
 
-        taskManager.use('test_task', (task) => {});
+        taskManager.use('test_task', (task) => { });
 
         taskManager.start();
 

@@ -64,7 +64,7 @@ const { TaskManager } = require('fib-dcron');
 
 // Initialize task manager with options
 const taskManager = new TaskManager({
-    dbConnection: 'sqlite:tasks.db',  // SQLite database connection
+    dbConnection: 'sqlite:tasks.db',  // Database connection string
     poll_interval: 1000,           // Poll interval in milliseconds
     max_retries: 3,               // Maximum retry attempts
     retry_interval: 300,          // Retry interval in seconds
@@ -232,12 +232,11 @@ taskManager.async('retryableTask', data, {
 
 ## Database Configuration
 
-### Connection Options
-
-fib-dcron supports three types of database connections:
+fib-dcron supports both SQLite and MySQL databases. You can specify the database connection in three ways:
 
 1. **Connection String**:
 ```javascript
+// SQLite
 const taskManager = new TaskManager({
     dbConnection: 'sqlite:tasks.db'
 });
@@ -253,53 +252,36 @@ const taskManager = new TaskManager({
 
 3. **Connection Pool**:
 ```javascript
+// When using a connection pool, you must specify the database type
 const pool = Pool({
     create: () => db.open('sqlite:tasks.db'),
     destroy: conn => conn.close(),
+    timeout: 30000,
+    retry: 1,
     maxsize: 5
 });
+
 const taskManager = new TaskManager({
-    dbConnection: pool
+    dbConnection: pool,
+    dbType: 'sqlite'    // Required when using connection pool
+});
+
+// MySQL example with pool
+const mysqlPool = Pool({
+    create: () => db.open('mysql://user:password@localhost:3306/dbname'),
+    destroy: conn => conn.close(),
+    timeout: 30000,
+    retry: 1,
+    maxsize: 5
+});
+
+const taskManager = new TaskManager({
+    dbConnection: mysqlPool,
+    dbType: 'mysql'    // Required when using connection pool
 });
 ```
 
-### Schema Initialization
-
-After creating a TaskManager instance, you must initialize the database schema:
-
-```javascript
-// Initialize database schema
-await taskManager.db.setup();
-
-// Now you can start using the task manager
-taskManager.start();
-```
-
-The schema includes tables for:
-- Tasks and their current status
-- Task execution history
-- Retry attempts and results
-- Cron schedules
-
-### Connection Management
-
-The TaskManager handles connection lifecycle automatically:
-- Connections are established when TaskManager starts
-- Connections are properly closed when TaskManager stops
-- Connection pools are managed efficiently for high concurrency
-- Failed connections are retried with exponential backoff
-
-For custom connection management, you can manually control the database connection:
-```javascript
-// Custom connection handling
-const taskManager = new TaskManager({
-    dbConnection: () => {
-        const conn = db.open('sqlite:tasks.db');
-        // Add custom connection setup
-        return conn;
-    }
-});
-```
+Note: The `dbType` parameter is only required when using a connection pool. When using a connection string, the database type is automatically inferred from the connection string prefix ('sqlite:' or 'mysql:').
 
 ## API Reference
 
@@ -310,6 +292,7 @@ const taskManager = new TaskManager({
  * Create a task manager instance
  * @param {Object} options Configuration options
  * @param {string|object|function} options.dbConnection Database connection (string/object/pool)
+ * @param {string} [options.dbType] Database type ('sqlite' or 'mysql') - Required when using connection pool
  * @param {number} [options.poll_interval=1000] Poll interval in milliseconds
  * @param {number} [options.max_retries=3] Default maximum retry attempts
  * @param {number} [options.retry_interval=300] Default retry interval in seconds

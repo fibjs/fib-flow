@@ -3,6 +3,7 @@ test.setup();
 
 const coroutine = require('coroutine');
 const { TaskManager } = require('..');
+const config = require('./config.js');
 
 describe('Cron Tests', () => {
     let db;
@@ -10,7 +11,7 @@ describe('Cron Tests', () => {
 
     beforeEach(() => {
         taskManager = new TaskManager({
-            dbConnection: 'sqlite:test.db',
+            dbConnection: config.dbConnection,
             poll_interval: 100,
             max_retries: 2,
             max_concurrent_tasks: 3
@@ -92,7 +93,10 @@ describe('Cron Tests', () => {
         while(attempts < taskManager.options.max_retries + 1) {
             coroutine.sleep(100);
         }
-        coroutine.sleep(1000);
+
+        while(taskManager.getTask(taskId).status !== 'paused') {
+            coroutine.sleep(100);
+        }
 
         const task = taskManager.getTask(taskId);
         assert.equal(task.retry_count > 0, true);
