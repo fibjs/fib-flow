@@ -297,6 +297,7 @@ Note: The `dbType` parameter is only required when using a connection pool. When
  * @param {number} [options.max_retries=3] Default maximum retry attempts
  * @param {number} [options.retry_interval=300] Default retry interval in seconds
  * @param {number} [options.max_concurrent_tasks=10] Maximum concurrent tasks
+ * @param {number} [options.active_update_interval=1000] Interval in milliseconds for updating task active time
  */
 constructor(options = {}) {}
 
