@@ -1,0 +1,36 @@
+{
+    "name": "fib-dcron",
+    "version": "0.1.0",
+    "description": "Distributed cron task scheduler for fibjs with robust error handling and task lifecycle management",
+    "main": "lib/index.js",
+    "scripts": {
+        "test": "fibjs test"
+    },
+    "dependencies": {
+        "fib-pool": "^1.6.0",
+        "cron-parser": "^4.9.0"
+    },
+    "devDependencies": {
+        "@fibjs/types": "latest"
+    },
+    "keywords": [
+        "fibjs",
+        "cron",
+        "scheduler",
+        "distributed",
+        "task",
+        "job",
+        "queue",
+        "retry",
+        "error-handling"
+    ],
+    "author": "Codeium",
+    "license": "MIT",
+    "repository": {
+        "type": "git",
+        "url": "https://github.com/codeium/fib-dcron"
+    },
+    "engines": {
+        "fibjs": ">=0.35.0"
+    }
+}
