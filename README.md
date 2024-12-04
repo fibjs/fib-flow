@@ -1,6 +1,55 @@
 # fib-flow
 
-fib-flow is a workflow management system built on Fibjs, designed for orchestrating complex task dependencies and managing distributed task execution.
+fib-flow is a workflow management system built on fibjs, designed for orchestrating complex task dependencies and managing distributed task execution.
+
+## Installation
+
+Install fib-flow via fibjs:
+
+```bash
+fibjs --install fib-flow
+```
+
+## Quick Start
+
+```javascript
+const { TaskManager } = require('fib-flow');
+
+// Initialize task manager with options
+const taskManager = new TaskManager({
+    dbConnection: 'sqlite:tasks.db',  // Database connection string
+    poll_interval: 1000,           // Poll interval in milliseconds
+    max_retries: 3,               // Maximum retry attempts
+    retry_interval: 300,          // Retry interval in seconds
+    max_concurrent_tasks: 10      // Maximum concurrent tasks
+});
+
+// Initialize database
+taskManager.db.setup();
+
+// Register task handlers
+taskManager.use('sendEmail', async (task) => {
+    const { to, subject, body } = task.payload;
+    await sendEmail(to, subject, body);
+    return { sent: true };
+});
+
+// Start the task manager
+taskManager.start();
+
+// Add an async task
+taskManager.async('sendEmail', {
+    to: 'user@example.com',
+    subject: 'Hello',
+    body: 'World'
+}, {
+    delay: 0,           // Delay execution in seconds
+    priority: 1,        // Task priority
+    timeout: 30,        // Timeout in seconds
+    max_retries: 3,     // Maximum retry attempts
+    retry_interval: 60  // Retry interval in seconds
+});
+```
 
 ## Key Features
 
@@ -43,60 +92,9 @@ fib-flow is a workflow management system built on Fibjs, designed for orchestrat
 - **Complex Workflows**: Multi-step data pipelines, approval processes
 - **Distributed Systems**: Task coordination across multiple services
 
-## Installation
-
-Install fib-flow via fibjs:
-
-```bash
-fibjs --install fib-flow
-```
-
-## Getting Started
-
-Here's a quick guide to using fib-flow:
-
-```javascript
-const { TaskManager } = require('fib-flow');
-
-// Initialize task manager with options
-const taskManager = new TaskManager({
-    dbConnection: 'sqlite:tasks.db',  // Database connection string
-    poll_interval: 1000,           // Poll interval in milliseconds
-    max_retries: 3,               // Maximum retry attempts
-    retry_interval: 300,          // Retry interval in seconds
-    max_concurrent_tasks: 10      // Maximum concurrent tasks
-});
-
-// Initialize database
-taskManager.db.setup();
-
-// Register task handlers
-taskManager.use('sendEmail', async (task) => {
-    const { to, subject, body } = task.payload;
-    await sendEmail(to, subject, body);
-    return { sent: true };
-});
-
-// Start the task manager
-taskManager.start();
-
-// Add an async task
-taskManager.async('sendEmail', {
-    to: 'user@example.com',
-    subject: 'Hello',
-    body: 'World'
-}, {
-    delay: 0,           // Delay execution in seconds
-    priority: 1,        // Task priority
-    timeout: 30,        // Timeout in seconds
-    max_retries: 3,     // Maximum retry attempts
-    retry_interval: 60  // Retry interval in seconds
-});
-```
-
 ## Core Concepts
 
-### Task Lifecycle and Execution
+### Task States and Transitions
 
 #### Task States
 
@@ -234,28 +232,37 @@ taskManager.async('retryableTask', data, {
 });
 ```
 
-## Workflow Support
+### Workflow Support
 
-fib-flow provides robust support for complex task workflows, allowing you to create parent-child task relationships and manage task dependencies.
+fib-flow provides comprehensive support for complex task workflows, enabling you to create sophisticated task hierarchies and manage dependencies effectively.
 
-#### Workflow Features
+#### Core Workflow Concepts
 
-- **Parent-Child Relationships**: Tasks can create and manage child tasks
-- **Status Propagation**: Child task failures automatically affect parent task status
-- **Result Collection**: Easy access to child task results
-- **Automatic Cleanup**: Proper handling of task hierarchies
+1. **Parent-Child Relationships**
+   - Parent tasks can create multiple child tasks
+   - Parent task enters `suspended` state while waiting for children
+   - Parent task resumes only when all children complete successfully
 
-#### Creating Workflows
+2. **State Management**
+   - Parent tasks automatically transition to `suspended` when creating children
+   - Child task failures automatically propagate to parent:
+     * Async parent tasks → `permanently_failed`
+     * Cron parent tasks → `paused`
+   - No parent task callback on child failure - state changes are automatic
 
+3. **Task Monitoring**
+   - Track entire workflow progress through task states
+   - Access child task results and errors
+   - Query tasks by parent-child relationships
+
+#### Workflow Examples
+
+1. **Basic Parent-Child Workflow**
 ```javascript
-// Parent task that creates child tasks
+// Parent task handler - creates and manages child tasks
 taskManager.use('parent_task', (task, next) => {
-    // Only called in two scenarios:
-    // 1. First execution - create child tasks
-    // 2. All child tasks completed successfully
-    
+    // First execution - create child tasks
     if (!task.completed_children) {
-        // First execution - create child tasks
         return next([
             {
                 name: 'child_task1',
@@ -268,7 +275,7 @@ taskManager.use('parent_task', (task, next) => {
         ]);
     }
 
-    // All children completed successfully
+    // Called only when all children complete successfully
     return { result: 'workflow_complete' };
 });
 
@@ -280,24 +287,68 @@ taskManager.use('child_task1', task => {
 taskManager.use('child_task2', task => {
     return { result: 'child2_result' };
 });
+
+// Start the workflow
+const parentId = taskManager.async('parent_task', { data: 'parent_data' });
 ```
 
-#### Workflow State Management
-
-- Parent tasks enter `suspended` state while waiting for children
-- When child tasks fail:
-  - For async parent tasks: automatically moves to `permanently_failed` state
-  - For cron parent tasks: automatically moves to `paused` state
-- No callback to parent task on child failure - state changes are automatic
-- Parent task handler only runs when all children complete successfully
-
-#### Monitoring Tasks
-
+2. **Nested Workflows**
 ```javascript
-// Get all child tasks for a parent
+// Root task creates middle-level tasks
+taskManager.use('root_task', (task, next) => {
+    if (!task.completed_children) {
+        return next([{
+            name: 'middle_task',
+            payload: { level: 1 }
+        }]);
+    }
+    return { result: 'root_done' };
+});
+
+// Middle task creates leaf tasks
+taskManager.use('middle_task', (task, next) => {
+    if (!task.completed_children) {
+        return next([{
+            name: 'leaf_task',
+            payload: { level: 2 }
+        }]);
+    }
+    return { result: 'middle_done' };
+});
+
+// Leaf task performs actual work
+taskManager.use('leaf_task', task => {
+    return { result: 'leaf_done' };
+});
+```
+
+3. **Error Handling in Workflows**
+```javascript
+// Parent task with error handling
+taskManager.use('parent_task', (task, next) => {
+    if (!task.completed_children) {
+        return next([{
+            name: 'risky_task',
+            payload: { data: 'important' },
+            max_retries: 3,           // Override retry settings
+            retry_interval: 60        // Wait 1 minute between retries
+        }]);
+    }
+    return { result: 'success' };
+});
+
+// Child task that might fail
+taskManager.use('risky_task', task => {
+    if (someErrorCondition) {
+        throw new Error('Task failed');  // Parent will be notified automatically
+    }
+    return { result: 'success' };
+});
+
+// Monitor workflow progress
+const parentId = taskManager.async('parent_task', {});
 const children = taskManager.getChildTasks(parentId);
 
-// Check task statuses
 children.forEach(child => {
     console.log(`Child ${child.id}: ${child.status}`);
     if (child.status === 'completed') {
@@ -306,6 +357,88 @@ children.forEach(child => {
         console.log('Error:', child.error);
     }
 });
+```
+
+## API Reference
+
+### TaskManager
+
+#### Constructor
+```javascript
+/**
+ * Create a task manager instance
+ * @param {Object} options Configuration options
+ * @param {string|object} options.dbConnection Database connection string or object
+ * @param {string} [options.dbType] Database type ('sqlite' or 'mysql')
+ * @param {number} [options.poll_interval=1000] Poll interval in milliseconds
+ * @param {number} [options.max_retries=3] Default maximum retry attempts
+ * @param {number} [options.retry_interval=300] Default retry interval in seconds
+ * @param {number} [options.max_concurrent_tasks=10] Maximum concurrent tasks
+ * @param {number} [options.active_update_interval=1000] Active time update interval
+ */
+new TaskManager(options)
+```
+
+#### Task Registration
+```javascript
+/**
+ * Register a task handler
+ * @param {string} taskName Task type identifier
+ * @param {Function} handler Async function(task, next) to handle task
+ */
+use(taskName, handler)
+```
+
+#### Task Creation
+```javascript
+/**
+ * Create an async task
+ * @param {string} taskName Task type
+ * @param {Object} payload Task data
+ * @param {Object} options Task options
+ * @param {number} [options.delay] Delay in seconds
+ * @param {number} [options.priority] Priority level
+ * @param {number} [options.timeout] Timeout in seconds
+ * @param {number} [options.max_retries] Max retry attempts
+ * @param {number} [options.retry_interval] Retry interval in seconds
+ */
+async(taskName, payload, options)
+
+/**
+ * Create a cron task
+ * @param {string} taskName Task type
+ * @param {string} cronExpr Cron expression
+ * @param {Object} payload Task data
+ * @param {Object} options Same as async task options
+ */
+cron(taskName, cronExpr, payload, options)
+```
+
+#### Task Control
+```javascript
+// Start the TaskManager and begin processing tasks
+start()
+
+// Stop the TaskManager and cleanup resources
+stop()
+
+// Resume a specific paused task by ID
+resumeTask(taskId)
+```
+
+#### Task Query
+```javascript
+// Get a specific task
+getTask(taskId)
+
+// Get tasks by name
+getTasksByName(name)
+
+// Get tasks by status
+getTasksByStatus(status)
+
+// Get child tasks
+getChildTasks(parentId)
 ```
 
 ## Database Configuration
@@ -360,98 +493,6 @@ const taskManager = new TaskManager({
 ```
 
 Note: The `dbType` parameter is only required when using a connection pool. When using a connection string, the database type is automatically inferred from the connection string prefix ('sqlite:' or 'mysql:').
-
-## API Reference
-
-### TaskManager
-
-```javascript
-/**
- * Create a task manager instance
- * @param {Object} options Configuration options
- * @param {string|object|function} options.dbConnection Database connection (string/object/pool)
- * @param {string} [options.dbType] Database type ('sqlite' or 'mysql') - Required when using connection pool
- * @param {number} [options.poll_interval=1000] Poll interval in milliseconds
- * @param {number} [options.max_retries=3] Default maximum retry attempts
- * @param {number} [options.retry_interval=300] Default retry interval in seconds
- * @param {number} [options.max_concurrent_tasks=10] Maximum concurrent tasks
- * @param {number} [options.active_update_interval=1000] Interval in milliseconds for updating task active time
- */
-constructor(options = {}) {}
-
-/**
- * Register a task handler
- * @param {string} name Task name
- * @param {Function} handler Task handler function
- */
-use(name, handler) {}
-
-/**
- * Add an async task
- * @param {string} name Task name
- *param {Object} payload Task data
- * @param {Object} [options] Task options
- * @param {number} [options.delay=0] Delay execution in seconds
- * @param {number} [options.priority=0] Task priority
- * @param {number} [options.timeout=60] Timeout in seconds
- * @param {number} [options.max_retries=3] Maximum retry attempts
- * @param {number} [options.retry_interval=0] Retry interval in seconds
- * @returns {number} Task ID
- */
-async(name, payload, options = {}) {}
-
-/**
- * Add a cron task
- * @param {string} name Task name
- * @param {string} cron_expr Cron expression
- * @param {Object} payload Task data
- * @param {Object} [options] Task options
- * @param {number} [options.timeout=60] Timeout in seconds
- * @param {number} [options.max_retries=3] Maximum retry attempts
- * @param {number} [options.retry_interval=0] Retry interval in seconds
- * @returns {number} Task ID
- */
-cron(name, cron_expr, payload = {}, options = {}) {}
-
-/**
- * Resume a paused cron task
- * @param {number} taskId Task ID
- * @throws {Error} If task is not found or not in paused state
- * @returns {number} Number of affected rows
- */
-resumeTask(taskId) {}
-
-/**
- * Start the task manager
- */
-start() {}
-
-/**
- * Stop the task manager
- */
-stop() {}
-
-/**
- * Retrieve task by ID
- * @param {number} taskId Task ID
- * @returns {Object} Task object
- */
-getTask(taskId) {}
-
-/**
- * Retrieve tasks by name
- * @param {string} name Task name
- * @returns {Array<Object>} Array of task objects
- */
-getTasksByName(name) {}
-
-/**
- * Retrieve tasks by status
- * @param {string} status Task status
- * @returns {Array<Object>} Array of task objects
- */
-getTasksByStatus(status) {}
-```
 
 ## Usage Examples
 

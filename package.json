@@ -1,7 +1,7 @@
 {
     "name": "fib-flow",
-    "version": "0.1.0",
-    "description": "Distributed cron task scheduler for fibjs with robust error handling and task lifecycle management",
+    "version": "1.0.0",
+    "description": "A robust workflow management system for fibjs with task orchestration, state management, and distributed execution capabilities",
     "main": "lib/index.js",
     "scripts": {
         "test": "fibjs test"
@@ -10,27 +10,26 @@
         "fib-pool": "^1.6.0",
         "cron-parser": "^4.9.0"
     },
-    "devDependencies": {
-        "@fibjs/types": "latest"
-    },
     "keywords": [
         "fibjs",
-        "cron",
-        "scheduler",
+        "workflow",
+        "task-orchestration",
         "distributed",
-        "task",
-        "job",
-        "queue",
-        "retry",
-        "error-handling"
+        "scheduler",
+        "cron",
+        "job-queue",
+        "state-machine",
+        "retry-mechanism",
+        "error-handling",
+        "parent-child-tasks"
     ],
-    "author": "Codeium",
+    "publishConfig": {
+        "access": "public"
+    },
+    "author": "lion@9465.net",
     "license": "MIT",
     "repository": {
         "type": "git",
-        "url": "https://github.com/codeium/fib-flow"
-    },
-    "engines": {
-        "fibjs": ">=0.35.0"
+        "url": "https://github.com/fibjs/fib-flow"
     }
 }
