@@ -112,9 +112,11 @@ describe('Cron Tests', () => {
         taskManager.start();
         coroutine.sleep(1);
 
+        taskManager.pause();
         taskManager.cron('test', '* * * * * *', { id: 1 }, { priority: 1 });
         taskManager.cron('test', '* * * * * *', { id: 2 }, { priority: 2 });
         taskManager.cron('test', '* * * * * *', { id: 3 }, { priority: 1 });
+        taskManager.resume();
 
         coroutine.sleep(1500);
 

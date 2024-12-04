@@ -1,66 +1,62 @@
-# fib-dcron
+# fib-flow
 
-fib-dcron is a robust task scheduling system built on Fibjs, designed to help you manage and execute background tasks with reliability and flexibility. Whether you need to process one-time jobs or schedule recurring operations, fib-dcron provides a simple yet powerful solution.
+fib-flow is a workflow management system built on Fibjs, designed for orchestrating complex task dependencies and managing distributed task execution.
 
-## Overview
+## Key Features
 
-### Core Capabilities
+### Workflow Management
+- Parent-child task relationships with automatic state propagation
+- Suspended state for parent tasks while child tasks execute
+- Automatic failure handling and state transitions
+- Easy access to child task results and statuses
 
-fib-dcron offers a comprehensive task management solution with:
+### Task Types & Scheduling
+- **Async Tasks**: One-time execution with configurable delays and priorities
+- **Cron Jobs**: Recurring tasks using standard cron expressions
+- Priority-based task execution
+- Concurrent task processing with resource limits
 
-- **Task Scheduling**: Both one-time async tasks and recurring cron jobs
-- **Reliability**: Persistent storage, automatic retries, and error recovery
-- **Scalability**: Works seamlessly in single-server and distributed environments
-- **Performance**: Efficient coroutine-based execution with connection pooling
+### State Management
+- Comprehensive task lifecycle management
+- Automatic state transitions based on execution results
+- Different handling for async vs cron task failures
+- Parent task state changes based on child task outcomes
 
-### Key Features
+### Reliability & Performance
+- Automatic retries with configurable attempts and intervals
+- Timeout protection and detection
+- Connection pooling for database operations
+- Transaction safety for state changes
 
-#### Task Management
-- **Async Tasks**: Schedule one-time jobs with configurable delays and priorities
-- **Cron Jobs**: Set up recurring tasks using standard cron expressions
-- **Priority Control**: Ensure critical tasks are processed first
-- **State Tracking**: Monitor task lifecycle from creation to completion
+### Database Support
+- SQLite and MySQL adapters
+- Efficient indexing for workflow queries
+- Flexible connection options:
+  - Connection strings
+  - Direct database objects
+  - Connection pools
 
-#### Reliability & Performance
-- **Automatic Retries**: Configurable retry attempts with customizable intervals
-- **Timeout Protection**: Safeguard against hung or stuck tasks
-- **Concurrent Processing**: Execute multiple tasks simultaneously
-- **Resource Control**: Manage system load with configurable limits
+## Common Use Cases
 
-#### Database Integration
-- **Flexible Connectivity**: Support for connection strings, direct DB objects, and connection pools
-- **Automatic Schema**: Self-managing database structure
-- **Transaction Safety**: Ensure data consistency across operations
-- **Connection Pooling**: Efficient database resource utilization
-
-#### Monitoring & Administration
-- **Task Inspection**: View task status, history, and execution results
-- **Manual Controls**: Pause, resume, or cancel tasks as needed
-- **Error Handling**: Comprehensive error tracking and recovery
-- **Resource Management**: Monitor and control system resource usage
-
-### Common Use Cases
-
-- **Background Processing**: Handle uploads, generate reports, send notifications
-- **Data Operations**: Schedule backups, run ETL jobs, perform cleanup
-- **System Maintenance**: Manage caches, rotate logs, archive data
-- **Periodic Updates**: Run health checks, update feeds, sync data
-- **Resource Management**: Clean temporary files, enforce quotas
+- **Background Processing**: File processing, report generation, data analysis
+- **Scheduled Tasks**: Periodic cleanup, data synchronization, backups
+- **Complex Workflows**: Multi-step data pipelines, approval processes
+- **Distributed Systems**: Task coordination across multiple services
 
 ## Installation
 
-Install fib-dcron via fibjs:
+Install fib-flow via fibjs:
 
 ```bash
-fibjs --install fib-dcron
+fibjs --install fib-flow
 ```
 
 ## Getting Started
 
-Here's a quick guide to using fib-dcron:
+Here's a quick guide to using fib-flow:
 
 ```javascript
-const { TaskManager } = require('fib-dcron');
+const { TaskManager } = require('fib-flow');
 
 // Initialize task manager with options
 const taskManager = new TaskManager({
@@ -104,19 +100,50 @@ taskManager.async('sendEmail', {
 
 #### Task States
 
-Tasks in the system follow a well-defined state machine with the following status values:
+Tasks in fib-flow can be in the following states:
 
 - `pending`: Task is waiting to be executed
 - `running`: Task is currently being executed
 - `completed`: Task has completed successfully
 - `failed`: Task execution failed but may be retried
 - `timeout`: Task exceeded its timeout duration
-- `permanently_failed`: Task failed and exceeded retry attempts
-- `paused`: Task (cron only) is paused after failures
+- `permanently_failed`: Async task that has failed and exceeded retry attempts
+- `paused`: Cron task that has failed and exceeded retry attempts
+- `suspended`: Parent task waiting for child tasks to complete
 
 #### State Transitions
 
-The following diagram shows how tasks move through different states:
+Tasks follow these state transition rules:
+
+1. Initial State
+   - All tasks start in `pending` state
+
+2. Basic Transitions
+   - `pending` → `running`: Task is claimed for execution
+   - `running` → `completed`: Task completes successfully
+   - `running` → `failed`: Task throws an error
+   - `running` → `timeout`: Task exceeds timeout duration
+
+3. Retry Transitions
+   - `failed` → `pending`: Task has remaining retry attempts
+   - `timeout` → `pending`: Task has remaining retry attempts
+   - `failed` → `permanently_failed`: Async task with no retries left
+   - `failed` → `paused`: Cron task with no retries left
+   - `timeout` → `permanently_failed`: Async task with no retries left
+   - `timeout` → `paused`: Cron task with no retries left
+
+4. Workflow Transitions
+   - `running` → `suspended`: Parent task creates child tasks
+   - `suspended` → `pending`: All child tasks completed successfully
+   - `suspended` → `permanently_failed`: Async parent task when any child fails
+   - `suspended` → `paused`: Cron parent task when any child fails
+
+5. Recovery Transitions
+   - `paused` → `pending`: Manually resume a paused cron task
+
+Note: State changes due to child task failures are automatic - the parent task handler is not called in these cases.
+
+#### State Diagram
 
 ```mermaid
 graph LR
@@ -129,19 +156,30 @@ graph LR
     timeout[Timeout]
     permanently_failed[Permanently Failed]
     paused[Paused]
+    suspended[Suspended]
     
-    %% State transitions
+    %% Basic transitions
     pending --> |"claim"| running
     running --> |"success"| completed
     running --> |"error"| failed
     running --> |"timeout"| timeout
+    
+    %% Retry transitions
     failed --> |"has retries"| pending
     timeout --> |"has retries"| pending
     failed --> |"no retries & async"| permanently_failed
     timeout --> |"no retries & async"| permanently_failed
     failed --> |"no retries & cron"| paused
     timeout --> |"no retries & cron"| paused
-    paused --> |"resume"| pending
+    
+    %% Workflow transitions
+    running --> |"create children"| suspended
+    suspended --> |"all children done"| pending
+    suspended --> |"child failed & async"| permanently_failed
+    suspended --> |"child failed & cron"| paused
+    
+    %% Recovery
+    paused --> |"manual resume"| pending
     
     %% Styling
     classDef default fill:#f9f9f9,stroke:#333,stroke-width:2px
@@ -150,46 +188,12 @@ graph LR
     classDef warning fill:#fff3cd,stroke:#ffc107
     classDef info fill:#cce5ff,stroke:#0d6efd
     
-    class pending,running default
+    class pending,running,suspended default
     class completed active
     class failed,timeout warning
     class permanently_failed error
     class paused info
 ```
-
-#### Execution Flow
-
-1. **Task Creation**
-   - User submits task via `async()` or `cron()`
-   - Task is stored in database with `pending` status
-   - Task options (retries, timeout, etc.) are saved
-
-2. **Task Scheduling**
-   - TaskManager polls for pending tasks
-   - Tasks are claimed based on priority and schedule
-   - Claimed task moves to `running` state
-
-3. **Task Execution**
-   - Handler function is called with task payload
-   - Execution is monitored for timeout
-   - Result or error is captured
-
-4. **Completion Handling**
-   - Success: Task moves to `completed`
-   - Error/Timeout: Task moves to `failed`/`timeout`
-   - Retry logic is applied if needed
-
-5. **Retry Processing**
-   - Check remaining retry attempts
-   - Apply retry delay if configured
-   - Move back to `pending` for retry
-   - Or move to `permanently_failed`/`paused`
-
-6. **Cron Tasks**
-   - Follow same flow as async tasks
-   - Can be paused after max retries
-   - Can be resumed manually
-   - Next schedule is calculated on completion
 
 ### Task Types
 
@@ -230,9 +234,83 @@ taskManager.async('retryableTask', data, {
 });
 ```
 
+## Workflow Support
+
+fib-flow provides robust support for complex task workflows, allowing you to create parent-child task relationships and manage task dependencies.
+
+#### Workflow Features
+
+- **Parent-Child Relationships**: Tasks can create and manage child tasks
+- **Status Propagation**: Child task failures automatically affect parent task status
+- **Result Collection**: Easy access to child task results
+- **Automatic Cleanup**: Proper handling of task hierarchies
+
+#### Creating Workflows
+
+```javascript
+// Parent task that creates child tasks
+taskManager.use('parent_task', (task, next) => {
+    // Only called in two scenarios:
+    // 1. First execution - create child tasks
+    // 2. All child tasks completed successfully
+    
+    if (!task.completed_children) {
+        // First execution - create child tasks
+        return next([
+            {
+                name: 'child_task1',
+                payload: { data: 'child1_data' }
+            },
+            {
+                name: 'child_task2',
+                payload: { data: 'child2_data' }
+            }
+        ]);
+    }
+
+    // All children completed successfully
+    return { result: 'workflow_complete' };
+});
+
+// Child task handlers
+taskManager.use('child_task1', task => {
+    return { result: 'child1_result' };
+});
+
+taskManager.use('child_task2', task => {
+    return { result: 'child2_result' };
+});
+```
+
+#### Workflow State Management
+
+- Parent tasks enter `suspended` state while waiting for children
+- When child tasks fail:
+  - For async parent tasks: automatically moves to `permanently_failed` state
+  - For cron parent tasks: automatically moves to `paused` state
+- No callback to parent task on child failure - state changes are automatic
+- Parent task handler only runs when all children complete successfully
+
+#### Monitoring Tasks
+
+```javascript
+// Get all child tasks for a parent
+const children = taskManager.getChildTasks(parentId);
+
+// Check task statuses
+children.forEach(child => {
+    console.log(`Child ${child.id}: ${child.status}`);
+    if (child.status === 'completed') {
+        console.log('Result:', child.result);
+    } else if (child.status === 'permanently_failed') {
+        console.log('Error:', child.error);
+    }
+});
+```
+
 ## Database Configuration
 
-fib-dcron supports both SQLite and MySQL databases. You can specify the database connection in three ways:
+fib-flow supports both SQLite and MySQL databases. You can specify the database connection in three ways:
 
 1. **Connection String**:
 ```javascript
@@ -311,7 +389,7 @@ use(name, handler) {}
 /**
  * Add an async task
  * @param {string} name Task name
- * @param {Object} payload Task data
+ *param {Object} payload Task data
  * @param {Object} [options] Task options
  * @param {number} [options.delay=0] Delay execution in seconds
  * @param {number} [options.priority=0] Task priority
