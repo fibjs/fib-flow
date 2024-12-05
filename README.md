@@ -359,6 +359,31 @@ children.forEach(child => {
 });
 ```
 
+### Task Handler System
+
+#### Handler Registration
+- Register specific handlers for different task types using `taskManager.use()`
+- Each handler can be specialized for specific task requirements
+- Multiple workers can register the same handler for load balancing
+- Specialized workers can register unique handlers for specific tasks
+
+#### Worker Specialization
+- **Load Balancing**: Multiple workers can register common handlers
+  - Tasks are distributed across available workers
+  - Automatic failover if a worker becomes unavailable
+  - Improved system throughput and reliability
+
+- **Specialized Processing**: Workers can register unique handlers
+  - GPU-dependent tasks can be routed to GPU-enabled workers
+  - Memory-intensive tasks can be directed to high-memory workers
+  - Special hardware requirements (e.g., TPU, FPGA) can be accommodated
+
+#### Handler Selection
+- Tasks are automatically routed to workers with matching handlers
+- If multiple workers are available, load is balanced automatically
+- Tasks requiring specific resources wait for appropriate workers
+- Ensures optimal resource utilization across the system
+
 ## API Reference
 
 ### TaskManager
