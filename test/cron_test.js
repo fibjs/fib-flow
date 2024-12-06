@@ -144,21 +144,21 @@ describe('Cron Tests', () => {
             if (task.status === 'timeout') break;
             coroutine.sleep(100);
         }
-        assert.equal(executionCount, 1, '第一次执行完成');
+        assert.equal(executionCount, 1);
 
         while (true) {
             task = taskManager.getTask(taskId);
             if (task.status === 'pending') break;
             coroutine.sleep(100);
         }
-        assert.equal(task.retry_count, 1, '已设置重试次数');
+        assert.equal(task.retry_count, 1);
 
         while (true) {
             task = taskManager.getTask(taskId);
             if (task.status === 'timeout' && task.retry_count === 1) break;
             coroutine.sleep(100);
         }
-        assert.equal(executionCount, 2, '重试执行完成');
+        assert.equal(executionCount, 2);
 
         while (true) {
             task = taskManager.getTask(taskId);
@@ -166,9 +166,9 @@ describe('Cron Tests', () => {
             coroutine.sleep(100);
         }
 
-        assert.equal(task.status, 'paused', '任务最终状态为 paused');
-        assert.equal(task.retry_count, 1, '重试次数正确');
-        assert.equal(executionCount, 2, '总执行次数正确');
+        assert.equal(task.status, 'paused');
+        assert.equal(task.retry_count, 1);
+        assert.equal(executionCount, 2);
     });
 
     it('should resume paused cron task', () => {
@@ -193,12 +193,12 @@ describe('Cron Tests', () => {
             coroutine.sleep(100);
         }
         
-        assert.equal(task.status, 'paused', '任务应该处于暂停状态');
-        assert.equal(executionCount, 2, '应该执行了2次（初始+重试）');
+        assert.equal(task.status, 'paused');
+        assert.equal(executionCount, 2);
 
         taskManager.resumeTask(taskId);
         task = taskManager.getTask(taskId);
-        assert.equal(task.status, 'pending', '恢复后状态应该是 pending');
-        assert.equal(task.retry_count, 0, '重试次数应该被重置');
+        assert.equal(task.status, 'pending');
+        assert.equal(task.retry_count, 0);
     });
 });

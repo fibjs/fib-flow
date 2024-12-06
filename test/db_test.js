@@ -194,7 +194,7 @@ describe("createAdapter", () => {
             type: "cron",
             cron_expr: "*/5 * * * *",
             payload: { data: "cron" },
-            next_run_time: now + 300 // 5分钟后运行
+            next_run_time: now + 300
         });
 
         const task = adapter.getTask(taskId);
@@ -236,7 +236,7 @@ describe("createAdapter", () => {
                         name: `concurrent_test_${i}`,
                         type: "async"
                     });
-                    coroutine.sleep(100); // 模拟长时间操作
+                    coroutine.sleep(100); // 
                 } catch (e) {
                     assert.ok(e.message.includes('timeout') || e.message.includes('busy'));
                 }

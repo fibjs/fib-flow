@@ -9,7 +9,6 @@ describe("Workflow Tests", () => {
     let taskManager;
 
     beforeEach(() => {
-        // 创建任务管理器实例
         taskManager = new TaskManager({
             dbConnection: config.dbConnection,
             poll_interval: 100,
@@ -28,11 +27,9 @@ describe("Workflow Tests", () => {
     it("should handle simple workflow", () => {
         let parentTaskId;
 
-        // 注册父任务处理器
         taskManager.use('parent_task', (task, next) => {
             console.log('Parent task started:', task.id);
 
-            // 第一次执行时创建子任务
             if (!task.completed_children) {
                 return next([
                     {
@@ -46,12 +43,10 @@ describe("Workflow Tests", () => {
                 ]);
             }
 
-            // 子任务完成后检查结果
             console.log('All child tasks completed');
             return { result: 'parent_done' };
         });
 
-        // 注册子任务处理器
         taskManager.use('child_task1', task => {
             console.log('Child task 1 executing:', task.id);
             return { result: 'child1_result' };
@@ -62,24 +57,19 @@ describe("Workflow Tests", () => {
             return { result: 'child2_result' };
         });
 
-        // 启动任务管理器
         taskManager.start();
 
-        // 提交父任务
         parentTaskId = taskManager.async('parent_task', { data: 'parent_data' });
         console.log('Created parent task:', parentTaskId);
 
-        // 等待任务完成
         while (taskManager.getTask(parentTaskId).status !== 'completed') {
             coroutine.sleep(100);
         }
 
-        // 验证父任务状态和结果
         const parentTask = taskManager.getTask(parentTaskId);
         assert.equal(parentTask.status, 'completed');
         assert.equal(parentTask.result.result, 'parent_done');
 
-        // 验证子任务状态和结果
         const children = taskManager.getChildTasks(parentTaskId);
         assert.equal(children.length, 2);
         assert.equal(children[0].status, 'completed');
@@ -91,7 +81,6 @@ describe("Workflow Tests", () => {
     it("should handle task failure", () => {
         let parentTaskId;
 
-        // 注册会失败的任务处理器
         taskManager.use('failing_parent', (task, next) => {
             console.log('Failing parent task started:', task.id);
 
@@ -112,23 +101,18 @@ describe("Workflow Tests", () => {
             throw new Error('Intentional failure');
         });
 
-        // 启动任务管理器
         taskManager.start();
 
-        // 提交会失败的任务
         parentTaskId = taskManager.async('failing_parent', { data: 'parent_data' });
         console.log('Created failing parent task:', parentTaskId);
 
-        // 等待任务完成
         while (taskManager.getTask(parentTaskId).status !== 'permanently_failed') {
             coroutine.sleep(100);
         }
 
-        // 验证父任务状态
         const parentTask = taskManager.getTask(parentTaskId);
         assert.equal(parentTask.status, 'permanently_failed');
 
-        // 验证子任务失败状态
         const children = taskManager.getChildTasks(parentTaskId);
         assert.equal(children.length, 1);
         assert.equal(children[0].status, 'permanently_failed');
@@ -138,7 +122,6 @@ describe("Workflow Tests", () => {
     it("should handle nested workflows", () => {
         let rootTaskId;
 
-        // 注册多层嵌套的任务处理器
         taskManager.use('root_task', (task, next) => {
             console.log('Root task started:', task.id);
 
@@ -174,19 +157,15 @@ describe("Workflow Tests", () => {
             return { result: 'leaf_done' };
         });
 
-        // 启动任务管理器
         taskManager.start();
 
-        // 提交根任务
         rootTaskId = taskManager.async('root_task', { data: 'root_data' });
         console.log('Created root task:', rootTaskId);
 
-        // 等待任务完成
         while (taskManager.getTask(rootTaskId).status !== 'completed') {
             coroutine.sleep(100);
         }
 
-        // 验证整个工作流的状态和结果
         const rootTask = taskManager.getTask(rootTaskId);
         assert.equal(rootTask.status, 'completed');
         assert.equal(rootTask.result.result, 'root_done');
