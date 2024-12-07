@@ -84,6 +84,97 @@ taskManager.async('sendEmail', {
   - Connection strings
   - Direct database objects
   - Connection pools
+  - Automatic in-memory SQLite database when no connection is specified
+
+#### Database Connection Flexibility
+
+You can now create a `TaskManager` without explicitly providing a database connection. In such cases, an in-memory SQLite database will be automatically created:
+
+```javascript
+const taskManager = new TaskManager(); // No database connection specified
+taskManager.db.setup(); // Initialize database schema
+
+// Register task handlers
+taskManager.use('data_processing', async (task) => {
+    const { data } = task.payload;
+    
+    // Perform data transformation
+    const processedData = await transformData(data);
+    
+    // Return processed data for potential child tasks
+    return { processedData };
+});
+
+taskManager.use('data_storage', async (task) => {
+    const { processedData } = task.payload;
+    
+    // Store processed data
+    await storeData(processedData);
+    
+    return { stored: true };
+});
+
+// Start the task manager
+taskManager.start();
+
+// Add an async task with workflow
+taskManager.async('data_processing', {
+    data: rawInputData
+}, {
+    children: ['data_storage']  // Define child task workflow
+});
+```
+
+**Single-Instance Use Cases**
+
+This feature is particularly beneficial for single-instance, in-process scenarios where:
+- Distributed task management is not required
+- High fault tolerance is not critical
+- Simple, lightweight task orchestration is needed
+- Tasks are executed within a single process or application
+
+Example of in-process workflow:
+
+```javascript
+const taskManager = new TaskManager(); // No database connection specified
+taskManager.db.setup(); // Initialize database schema
+
+// Register task handlers
+taskManager.use('data_processing', async (task) => {
+    const { data } = task.payload;
+    
+    // Perform data transformation
+    const processedData = await transformData(data);
+    
+    // Return processed data for potential child tasks
+    return { processedData };
+});
+
+taskManager.use('data_storage', async (task) => {
+    const { processedData } = task.payload;
+    
+    // Store processed data
+    await storeData(processedData);
+    
+    return { stored: true };
+});
+
+// Start the task manager
+taskManager.start();
+
+// Add an async task with workflow
+taskManager.async('data_processing', {
+    data: rawInputData
+}, {
+    children: ['data_storage']  // Define child task workflow
+});
+```
+
+Benefits in single-instance scenarios:
+- Zero configuration overhead
+- Minimal performance impact
+- Simplified task management for local, non-distributed workloads
+- Ideal for microservices, background processing, and event-driven architectures
 
 ## Common Use Cases
 

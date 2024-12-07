@@ -226,6 +226,7 @@ describe("createAdapter", () => {
 
     it("should handle connection pool timeout", () => {
         const smallPoolAdapter = createAdapter(config.dbConnection, 1);
+        smallPoolAdapter.setup();
         smallPoolAdapter.clearTasks();
 
         const fibers = [];
