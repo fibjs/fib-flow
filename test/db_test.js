@@ -72,7 +72,7 @@ describe("createAdapter", () => {
     it("should throw error for invalid task", () => {
         assert.throws(() => {
             adapter.insertTask({});
-        }, /Task object is required/);
+        }, /Task name is required/);
 
         assert.throws(() => {
             adapter.insertTask({ name: "" });
@@ -217,11 +217,11 @@ describe("createAdapter", () => {
                 name: "test",
                 type: "invalid_type"
             });
-        }, /type.*check/);
+        }, /type.*either/);
 
         assert.throws(() => {
             adapter.updateTaskStatus(1, "invalid_status");
-        }, /status.*check/);
+        }, /Invalid.*value/);
     });
 
     it("should handle connection pool timeout", () => {
