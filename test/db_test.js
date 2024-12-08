@@ -321,4 +321,32 @@ describe("createAdapter", () => {
             adapter.getTasksByName();
         }, /Task name is required/);
     });
+
+    it("should prioritize tasks by priority and execution time", () => {
+        const now = Math.floor(Date.now() / 1000);
+        adapter.insertTask({
+            name: "early_low_priority",
+            type: "async",
+            priority: 1,
+            next_run_time: now - 100  
+        });
+        adapter.insertTask({
+            name: "high_priority_on_time",
+            type: "async",
+            priority: 10,
+            next_run_time: now  
+        });
+        adapter.insertTask({
+            name: "medium_priority_late",
+            type: "async",
+            priority: 5,
+            next_run_time: now + 100  
+        });
+        const claimed = adapter.claimTask([
+            "early_low_priority", 
+            "high_priority_on_time", 
+            "medium_priority_late"
+        ]);
+        assert.equal(claimed.name, "high_priority_on_time");
+    });
 });
