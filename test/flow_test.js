@@ -30,7 +30,7 @@ describe("Workflow Tests", () => {
         taskManager.use('parent_task', (task, next) => {
             console.log('Parent task started:', task.id);
 
-            if (!task.completed_children) {
+            if (task.stage === 0) {
                 return next([
                     {
                         name: 'child_task1',
@@ -84,7 +84,7 @@ describe("Workflow Tests", () => {
         taskManager.use('failing_parent', (task, next) => {
             console.log('Failing parent task started:', task.id);
 
-            if (!task.completed_children) {
+            if (task.stage === 0) {
                 return next([
                     {
                         name: 'failing_child',
@@ -125,7 +125,7 @@ describe("Workflow Tests", () => {
         taskManager.use('root_task', (task, next) => {
             console.log('Root task started:', task.id);
 
-            if (!task.completed_children) {
+            if (task.stage === 0) {
                 return next([
                     {
                         name: 'middle_task',

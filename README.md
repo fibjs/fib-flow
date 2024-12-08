@@ -334,14 +334,36 @@ fib-flow provides comprehensive support for complex task workflows, enabling you
    - Parent task enters `suspended` state while waiting for children
    - Parent task resumes only when all children complete successfully
 
-2. **State Management**
+2. **Task Stage Management**
+   - Each task has an internal `stage` attribute
+   - `stage` starts at `0` and increments automatically
+   - Enables multi-phase task processing and workflow control
+   - Allows conditional task creation and execution based on current stage
+
+   ```javascript
+   taskManager.use('complex_workflow', (task, next) => {
+       switch (task.stage) {
+           case 0:
+               // Initial validation or preparation
+               return next([{ name: 'prepare_task' }]);
+           case 1:
+               // Main processing
+               return next([{ name: 'process_task' }]);
+           case 2:
+               // Finalization
+               return { completed: true };
+       }
+   });
+   ```
+
+3. **State Management**
    - Parent tasks automatically transition to `suspended` when creating children
    - Child task failures automatically propagate to parent:
      * Async parent tasks → `permanently_failed`
      * Cron parent tasks → `paused`
    - No parent task callback on child failure - state changes are automatic
 
-3. **Task Monitoring**
+4. **Task Monitoring**
    - Track entire workflow progress through task states
    - Access child task results and errors
    - Query tasks by parent-child relationships
@@ -353,15 +375,17 @@ fib-flow provides comprehensive support for complex task workflows, enabling you
 // Parent task handler - creates and manages child tasks
 taskManager.use('parent_task', (task, next) => {
     // First execution - create child tasks
-    if (!task.completed_children) {
+    if (task.stage == 0) {
+        console.log('Starting first phase');
+        // Create child tasks or perform initial processing
         return next([
             {
                 name: 'child_task1',
-                payload: { data: 'child1_data' }
+                payload: { phase: 'initialization' }
             },
             {
                 name: 'child_task2',
-                payload: { data: 'child2_data' }
+                payload: { phase: 'processing' }
             }
         ]);
     }
@@ -387,7 +411,8 @@ const parentId = taskManager.async('parent_task', { data: 'parent_data' });
 ```javascript
 // Root task creates middle-level tasks
 taskManager.use('root_task', (task, next) => {
-    if (!task.completed_children) {
+    if (task.stage == 0) {
+        // Initial validation or preparation
         return next([{
             name: 'middle_task',
             payload: { level: 1 }
@@ -398,7 +423,8 @@ taskManager.use('root_task', (task, next) => {
 
 // Middle task creates leaf tasks
 taskManager.use('middle_task', (task, next) => {
-    if (!task.completed_children) {
+    if (task.stage == 0) {
+        // Main processing
         return next([{
             name: 'leaf_task',
             payload: { level: 2 }
@@ -417,7 +443,8 @@ taskManager.use('leaf_task', task => {
 ```javascript
 // Parent task with error handling
 taskManager.use('parent_task', (task, next) => {
-    if (!task.completed_children) {
+    if (task.stage == 0) {
+        // Initial validation or preparation
         return next([{
             name: 'risky_task',
             payload: { data: 'important' },
