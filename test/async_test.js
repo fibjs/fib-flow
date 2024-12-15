@@ -71,31 +71,90 @@ describe('Async Tasks', () => {
         assert.equal(attempts, 3);
     });
 
-    it('should handle task timeout', () => {
+    it('should handle task timeout through periodic check', () => {
         let taskStarted = false;
-
-        taskManager.use('timeout_task', async (task) => {
+        taskManager.use('timeout_task', (task) => {
             taskStarted = true;
-            await coroutine.sleepAsync(1000);
-            task.checkTimeout();
-            await coroutine.sleepAsync(1000);
+            coroutine.sleep(3000);
             return { success: true };
         });
 
         taskManager.start();
 
         const taskId = taskManager.async('timeout_task', {}, { timeout: 1, max_retries: 0 });
+        assert.ok(taskId > 0);
 
-        while (!taskStarted) {
-            coroutine.sleep(100);
-        }
+        coroutine.sleep(5000);
 
-        while (taskManager.getTask(taskId).status !== 'permanently_failed') {
-            coroutine.sleep(100);
-        }
-
+        assert.ok(taskStarted);
         const task = taskManager.getTask(taskId);
         assert.equal(task.status, 'permanently_failed');
+    });
+
+    it('should handle task resume', () => {
+        let executionCount = 0;
+        taskManager.use('resume_task', (task) => {
+            executionCount++;
+            if (executionCount === 1) {
+                // First execution - pause the task
+                taskManager.db.updateTaskStatus(task.id, 'paused');
+                return;
+            }
+            // Second execution after resume
+            return { success: true };
+        });
+
+        taskManager.start();
+
+        const taskId = taskManager.async('resume_task');
+        assert.ok(taskId > 0);
+
+        coroutine.sleep(500);
+        const pausedTask = taskManager.getTask(taskId);
+        assert.equal(pausedTask.status, 'paused');
+        assert.equal(executionCount, 1);
+
+        // Resume the task
+        taskManager.resumeTask(taskId);
+        coroutine.sleep(500);
+
+        const completedTask = taskManager.getTask(taskId);
+        assert.equal(completedTask.status, 'completed');
+        assert.equal(executionCount, 2);
+        assert.deepEqual(completedTask.result, { success: true });
+    });
+
+    it('should reset retry count when resuming task', () => {
+        let executionCount = 0;
+        taskManager.use('retry_resume_task', (task) => {
+            executionCount++;
+            if (executionCount === 1) {
+                // First execution - pause the task
+                taskManager.db.updateTaskStatus(task.id, 'paused', { retry_count: 2 });
+                return;
+            }
+            // Second execution after resume
+            return { success: true };
+        });
+
+        taskManager.start();
+
+        const taskId = taskManager.async('retry_resume_task', {}, { max_retries: 2 });
+        assert.ok(taskId > 0);
+
+        coroutine.sleep(1000);
+        const pausedTask = taskManager.getTask(taskId);
+        assert.equal(pausedTask.status, 'paused');
+        assert.equal(pausedTask.retry_count, 2);
+
+        // Resume the task - should reset retry count
+        taskManager.resumeTask(taskId);
+        coroutine.sleep(1000);
+
+        const completedTask = taskManager.getTask(taskId);
+        assert.equal(completedTask.status, 'completed');
+        assert.equal(completedTask.retry_count, 0);
+        assert.deepEqual(completedTask.result, { success: true });
     });
 
     it('should handle concurrent tasks', () => {

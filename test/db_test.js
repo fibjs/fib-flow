@@ -90,7 +90,7 @@ describe("createAdapter", () => {
             payload: { data: "claim" }
         });
 
-        const claimed = adapter.claimTask(["claim_test"]);
+        const claimed = adapter.claimTask(["claim_test"], "test-worker");
         assert.ok(claimed);
         assert.equal(claimed.id, taskId);
         assert.equal(claimed.name, "claim_test");
@@ -101,6 +101,10 @@ describe("createAdapter", () => {
         assert.throws(() => {
             adapter.claimTask([]);
         }, /Task names array is required/);
+
+        assert.throws(() => {
+            adapter.claimTask(["test"], "");
+        }, /Worker ID is required/);
     });
 
     it("should update task status", () => {
@@ -110,7 +114,7 @@ describe("createAdapter", () => {
             payload: { data: "status" }
         });
 
-        adapter.claimTask(["status_test"]);
+        adapter.claimTask(["status_test"], "test-worker");
         adapter.updateTaskStatus(taskId, "completed");
 
         const task = adapter.getTask(taskId);
@@ -124,7 +128,7 @@ describe("createAdapter", () => {
             payload: { data: "failure" }
         });
 
-        adapter.claimTask(["failure_test"]);
+        adapter.claimTask(["failure_test"], "test-worker");
         adapter.updateTaskStatus(taskId, "failed", { error: "error message" });
 
         const task = adapter.getTask(taskId);
@@ -145,7 +149,7 @@ describe("createAdapter", () => {
             priority: 1
         });
 
-        const claimed = adapter.claimTask(["high_priority", "low_priority"]);
+        const claimed = adapter.claimTask(["high_priority", "low_priority"], "test-worker");
         assert.equal(claimed.name, "high_priority");
     });
 
@@ -155,7 +159,7 @@ describe("createAdapter", () => {
             type: "async"
         });
 
-        adapter.claimTask(["running_test"]);
+        adapter.claimTask(["running_test"], "test-worker");
 
         const runningTasks = adapter.getRunningTasks();
         assert.ok(runningTasks.some(task => task.id === taskId));
@@ -167,11 +171,57 @@ describe("createAdapter", () => {
             type: "async"
         });
 
-        adapter.claimTask(["active_time_test"]);
+        adapter.claimTask(["active_time_test"], "test-worker");
         adapter.updateTaskActiveTime(taskId);
 
         const task = adapter.getTask(taskId);
         assert.ok(task.last_active_time > 0);
+    });
+
+    it("should set start_time and worker_id when claiming task", () => {
+        const taskId = adapter.insertTask({
+            name: "claim_fields_test",
+            type: "async"
+        });
+
+        const beforeClaim = adapter.getTask(taskId);
+        assert.equal(beforeClaim.start_time, null);
+        assert.equal(beforeClaim.worker_id, null);
+
+        const claimed = adapter.claimTask(["claim_fields_test"], "test-worker");
+        const afterClaim = adapter.getTask(taskId);
+
+        assert.ok(afterClaim.start_time > 0);
+        assert.equal(afterClaim.worker_id, "test-worker");
+        assert.ok(afterClaim.last_active_time > 0);
+    });
+
+    it("should preserve worker_id when task completes", () => {
+        const taskId = adapter.insertTask({
+            name: "complete_worker_test",
+            type: "async"
+        });
+
+        adapter.claimTask(["complete_worker_test"], "test-worker");
+        adapter.updateTaskStatus(taskId, "completed");
+
+        const task = adapter.getTask(taskId);
+        assert.equal(task.worker_id, "test-worker");
+        assert.equal(task.status, "completed");
+    });
+
+    it("should preserve worker_id when task fails", () => {
+        const taskId = adapter.insertTask({
+            name: "fail_worker_test",
+            type: "async"
+        });
+
+        adapter.claimTask(["fail_worker_test"], "test-worker");
+        adapter.updateTaskStatus(taskId, "failed");
+
+        const task = adapter.getTask(taskId);
+        assert.equal(task.worker_id, "test-worker");
+        assert.equal(task.status, "failed");
     });
 
     it("should handle invalid JSON payload", () => {
@@ -267,9 +317,9 @@ describe("createAdapter", () => {
             })
         ];
 
-        adapter.claimTask(["running_task"]);
+        adapter.claimTask(["running_task"], "test-worker");
 
-        adapter.claimTask(["completed_task"]);
+        adapter.claimTask(["completed_task"], "test-worker");
         adapter.updateTaskStatus(taskIds[2], "completed");
 
         const pendingTasks = adapter.getTasksByStatus("pending");
@@ -346,7 +396,7 @@ describe("createAdapter", () => {
             "early_low_priority", 
             "high_priority_on_time", 
             "medium_priority_late"
-        ]);
+        ], "test-worker");
         assert.equal(claimed.name, "high_priority_on_time");
     });
 });
