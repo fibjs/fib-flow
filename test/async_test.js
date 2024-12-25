@@ -97,7 +97,7 @@ describe('Async Tasks', () => {
             executionCount++;
             if (executionCount === 1) {
                 // First execution - pause the task
-                taskManager.db.updateTaskStatus(task.id, 'paused');
+                taskManager.pauseTask(task.id);
                 return;
             }
             // Second execution after resume
