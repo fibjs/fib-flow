@@ -20,7 +20,7 @@ The TaskManager is the core component responsible for managing task lifecycles, 
  * Create a task manager instance
  * @param {Object} options Configuration options
  * @param {string|object} options.dbConnection Database connection string or object
- * @param {string} [options.dbType] Database type ('sqlite' or 'mysql')
+ * @param {string} [options.dbType] Database type ('sqlite', 'mysql', or 'postgres')
  * @param {number} [options.poll_interval=1000] Poll interval in milliseconds
  * @param {number} [options.max_retries=3] Default maximum retry attempts
  * @param {number} [options.retry_interval=300] Default retry interval in seconds

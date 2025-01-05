@@ -13,7 +13,10 @@ fib-flow is a workflow management system built on fibjs, designed for orchestrat
 
 ### Prerequisites
 - fibjs >= 0.33.0
-- SQLite3 or another supported database system
+- One of the following databases:
+  - SQLite3 (included)
+  - MySQL 5.7+
+  - PostgreSQL 12+
 
 Install fib-flow via fibjs:
 
@@ -41,7 +44,10 @@ taskManager.db.setup();
 ```
 
 Configuration Options:
-- `dbConnection`: Database connection string (supports SQLite, MySQL)
+- `dbConnection`: Database connection string (supports SQLite, MySQL, PostgreSQL)
+  - SQLite: `sqlite:tasks.db` or `sqlite::memory:`
+  - MySQL: `mysql://user:pass@host:3306/database`
+  - PostgreSQL: `psql://user:pass@host:5432/database`
 - `poll_interval`: How often to check for new tasks (in milliseconds)
 - `max_retries`: Number of retry attempts for failed tasks
 - `retry_interval`: Time to wait before retrying (in seconds)

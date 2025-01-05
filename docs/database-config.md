@@ -10,6 +10,7 @@ This document provides comprehensive guidance on configuring database connection
 - [Database Types](#database-types)
   - [SQLite](#sqlite)
   - [MySQL](#mysql)
+  - [PostgreSQL](#postgresql)
   - [Automatic Initialization](#automatic-initialization)
 - [Transaction Support](#transaction-support)
 
@@ -85,6 +86,34 @@ const mysqlPool = Pool({
 const taskManager = new TaskManager({
     dbConnection: mysqlPool,
     dbType: 'mysql'    // Required when using connection pool
+});
+```
+
+### PostgreSQL
+- Full support for PostgreSQL 12 and later
+- Connection pooling support
+- Native JSON data type support
+- Automatic schema migration
+- SSL connection support
+- Connection string and pool configuration:
+```javascript
+// Using connection string
+const taskManager = new TaskManager({
+    dbConnection: 'psql://user:password@localhost:5432/dbname'
+});
+
+// Using connection pool
+const pgPool = Pool({
+    create: () => db.open('psql://user:password@localhost:5432/dbname'),
+    destroy: conn => conn.close(),
+    timeout: 30000,
+    retry: 1,
+    maxsize: 5
+});
+
+const taskManager = new TaskManager({
+    dbConnection: pgPool,
+    dbType: 'postgres'    // Required when using connection pool
 });
 ```
 

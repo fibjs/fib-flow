@@ -8,7 +8,7 @@ A powerful workflow management system built on fibjs for orchestrating complex t
 - **Task Types**: Async tasks and cron jobs with priorities and delays
 - **State Management**: Comprehensive task lifecycle and state transitions
 - **Reliability**: Automatic retries, timeout protection, transaction safety
-- **Database Support**: SQLite/MySQL with flexible connection options
+- **Database Support**: SQLite/MySQL/PostgreSQL with flexible connection options
 - **Resource Management**: Load balancing and specialized worker support
 
 ## Installation
