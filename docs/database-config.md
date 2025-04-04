@@ -182,3 +182,61 @@ When working with transactions:
 5. Handle transaction failures gracefully
 
 Note: The transaction system is designed to be transparent to the user while ensuring data consistency across all database operations.
+
+## Schema Structure
+
+### Task Table
+The core table structure used by fib-flow includes the following fields:
+
+```sql
+-- Task identification and basic info
+id            -- Unique task identifier (AUTO_INCREMENT)
+name          -- Task type name
+type          -- Task type (async/cron)
+priority      -- Task priority (-20 to 20)
+payload       -- JSON encoded task data
+created_at    -- Creation timestamp
+tag           -- Optional task categorization tag
+
+-- Task execution status
+status        -- Current task state
+next_run_time -- Next scheduled execution time
+last_active_time -- Last activity timestamp
+result        -- JSON encoded execution result
+error         -- Error message if failed
+
+-- Task settings
+stage         -- Current execution stage
+timeout       -- Execution timeout in seconds
+retry_count   -- Current retry attempts
+max_retries   -- Maximum retry attempts
+retry_interval -- Delay between retries
+cron_expr     -- Cron expression (for cron tasks)
+
+-- Workflow relationships
+root_id       -- Root task ID in workflow
+parent_id     -- Parent task ID
+total_children -- Number of child tasks
+completed_children -- Completed child tasks
+
+-- Worker information
+worker_id     -- Worker instance ID
+start_time    -- Task start timestamp
+```
+
+### Indexes
+Each database adapter includes optimized indexes for common operations:
+
+```sql
+-- Task scheduling
+idx_task_scheduling (status, next_run_time, priority)
+
+-- Timeout detection
+idx_task_timeout (status, last_active_time)
+
+-- Workflow management
+idx_task_workflow (parent_id, status, completed_children)
+
+-- Task statistics
+idx_task_stats (tag, name, status)
+```

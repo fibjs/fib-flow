@@ -16,6 +16,7 @@ This section provides practical examples of using fib-flow in different scenario
   - [Error Handling and Retry](#error-handling-and-retry)
   - [Task Control](#task-control)
   - [Nested Tasks](#nested-tasks)
+- [Task Tagging and Statistics](#task-tagging-and-statistics)
 
 ## Async Task Examples
 
@@ -219,3 +220,50 @@ taskManager.use('fulfillOrder', (task, next) => {
 });
 ```
 This example shows how nested tasks can create complex workflows with parallel execution and task hierarchies.
+
+## Task Tagging and Statistics
+Tags provide a way to categorize and track tasks across your system. You can use tags to organize tasks by feature, environment, customer, or any other dimension.
+
+### Adding Tags to Tasks
+```javascript
+// Add tag to async task
+taskManager.async('processOrder', {
+    orderId: '12345'
+}, {
+    tag: 'orders'  // Tag for order processing tasks
+});
+
+// Add tag to cron task
+taskManager.cron('dailyReport', '0 0 * * *', {
+    reportType: 'sales'
+}, {
+    tag: 'reports'  // Tag for reporting tasks
+});
+```
+
+### Querying Tasks by Tag
+```javascript
+// Get all tasks with a specific tag
+const orderTasks = taskManager.getTasksByTag('orders');
+console.log('Order tasks:', orderTasks.length);
+
+// Get task statistics by tag
+const stats = taskManager.getTaskStatsByTag('orders');
+console.log('Order task statistics:', stats);
+// Example output:
+// [
+//   { tag: 'orders', name: 'processOrder', status: 'pending', count: 5 },
+//   { tag: 'orders', name: 'processOrder', status: 'completed', count: 10 }
+// ]
+
+// Get statistics for completed tasks only
+const completedStats = taskManager.getTaskStatsByTag('orders', 'completed');
+console.log('Completed orders:', completedStats);
+```
+
+### Common Use Cases for Tags
+- Track tasks by feature or service
+- Monitor tasks by customer or tenant
+- Separate tasks by environment (dev/staging/prod)
+- Group related tasks in a workflow
+- Track tasks by priority or importance

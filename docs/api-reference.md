@@ -54,6 +54,7 @@ Tasks can be created in two modes: async (one-time) tasks and cron (scheduled) t
  * @param {number} [options.timeout] Timeout in seconds
  * @param {number} [options.max_retries] Max retry attempts
  * @param {number} [options.retry_interval] Retry interval in seconds
+ * @param {string} [options.tag] Task tag for categorization
  */
 async(taskName, payload, options)
 
@@ -97,6 +98,12 @@ getTasksByStatus(status)
 
 // Get child tasks
 getChildTasks(parentId)
+
+// Get tasks by tag
+getTasksByTag(tag)
+
+// Get task statistics by tag
+getTaskStatsByTag(tag, status)
 ```
 
 ### Task Lifecycle

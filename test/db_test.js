@@ -412,5 +412,110 @@ describe("TaskManager DB Connection", () => {
                 smallPoolAdapter.close();
             });
         });
+
+        describe("Task Tags", () => {
+            it("should create task with tag", () => {
+                const taskId = adapter.insertTask({
+                    name: "tagged_task",
+                    type: "async",
+                    tag: "test_tag",
+                    payload: { data: "test" }
+                });
+
+                const task = adapter.getTask(taskId);
+                assert.equal(task.tag, "test_tag");
+            });
+
+            it("should get tasks by tag", () => {
+                // Create multiple tasks with same tag
+                adapter.insertTask({
+                    name: "task1",
+                    type: "async",
+                    tag: "common_tag",
+                    payload: { data: "test1" }
+                });
+
+                adapter.insertTask({
+                    name: "task2",
+                    type: "async",
+                    tag: "common_tag",
+                    payload: { data: "test2" }
+                });
+
+                adapter.insertTask({
+                    name: "task3",
+                    type: "async",
+                    tag: "other_tag",
+                    payload: { data: "test3" }
+                });
+
+                const taggedTasks = adapter.getTasksByTag("common_tag");
+                assert.equal(taggedTasks.length, 2);
+                assert.ok(taggedTasks.every(task => task.tag === "common_tag"));
+                assert.ok(taggedTasks.some(task => task.name === "task1"));
+                assert.ok(taggedTasks.some(task => task.name === "task2"));
+            });
+
+            it("should get task statistics by tag", () => {
+                // Create tasks with different tags and statuses
+                adapter.insertTask({
+                    name: "stats_task1",
+                    type: "async",
+                    tag: "stats_tag",
+                    status: "pending",
+                    payload: { data: "test1" }
+                });
+
+                adapter.insertTask({
+                    name: "stats_task1",
+                    type: "async",
+                    tag: "stats_tag",
+                    status: "pending",
+                    payload: { data: "test2" }
+                });
+
+                adapter.insertTask({
+                    name: "stats_task2",
+                    type: "async",
+                    tag: "stats_tag",
+                    status: "completed",
+                    payload: { data: "test3" }
+                });
+
+                // Get stats for specific tag
+                const tagStats = adapter.getTaskStatsByTag("stats_tag");
+                assert.ok(Array.isArray(tagStats));
+                assert.ok(tagStats.length > 0);
+                
+                // Verify stats structure and counts
+                const pendingStats = tagStats.find(stat => 
+                    stat.tag === "stats_tag" && 
+                    stat.name === "stats_task1" && 
+                    stat.status === "pending"
+                );
+                assert.ok(pendingStats);
+                assert.equal(pendingStats.count, 2);
+
+                const completedStats = tagStats.find(stat =>
+                    stat.tag === "stats_tag" &&
+                    stat.name === "stats_task2" &&
+                    stat.status === "completed"
+                );
+                assert.ok(completedStats);
+                assert.equal(completedStats.count, 1);
+
+                // Get stats with status filter
+                const pendingTagStats = adapter.getTaskStatsByTag("stats_tag", "pending");
+                assert.ok(Array.isArray(pendingTagStats));
+                assert.equal(pendingTagStats.length, 1);
+                assert.equal(pendingTagStats[0].count, 2);
+            });
+
+            it("should throw error for missing tag in getTasksByTag", () => {
+                assert.throws(() => {
+                    adapter.getTasksByTag();
+                }, /Tag is required/);
+            });
+        });
     });
 });
