@@ -31,14 +31,55 @@ new TaskManager(options)
 ```
 
 ### Task Registration
-Task registration allows you to define handlers for different types of tasks. Each task type must have a corresponding handler registered before tasks of that type can be executed.
+
+Tasks must be registered with handlers before they can be executed. There are two ways to register task handlers:
+
+#### Single Task Registration
+Register a single task type with its handler:
 ```javascript
 /**
- * Register a task handler
+ * Register a single task handler
  * @param {string} taskName Task type identifier
- * @param {Function} handler Async function(task, next) to handle task
+ * @param {Function} handler Async function(task, next) to handle task execution
  */
 use(taskName, handler)
+
+// Example
+use('processImage', async (task) => {
+  // Process single image
+  const { path } = task.payload;
+  // ... image processing logic
+  return { processed: true };
+});
+```
+
+#### Bulk Task Registration 
+Register multiple task types at once using an object:
+```javascript
+/**
+ * Register multiple task handlers at once
+ * @param {Object} handlers Object mapping task types to handler functions
+ */
+use({
+  // Property names are task types, values are handler functions
+  taskName: handlerFunction
+})
+
+// Example
+use({
+  processImage: async (task) => {
+    // Process image
+    return { processed: true };
+  },
+  processVideo: async (task) => {
+    // Process video
+    return { processed: true }; 
+  },
+  processAudio: async (task) => {
+    // Process audio
+    return { processed: true };
+  }
+});
 ```
 
 ### Task Creation

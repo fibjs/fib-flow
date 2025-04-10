@@ -124,10 +124,6 @@ describe("TaskManager DB Connection", () => {
 
             it("should handle invalid task names for claim", () => {
                 assert.throws(() => {
-                    adapter.claimTask([]);
-                }, /Task names array is required/);
-
-                assert.throws(() => {
                     adapter.claimTask(["test"], "");
                 }, /Worker ID is required/);
             });
@@ -184,6 +180,25 @@ describe("TaskManager DB Connection", () => {
 
                 const task = adapter.getTask(taskId);
                 assert.ok(task.last_active_time > 0);
+            });
+
+            it("should handle empty task names array for claim", () => {
+                // Should return null for empty task names array
+                const result = adapter.claimTask([], "test-worker");
+                assert.equal(result, null);
+
+                // Verify database state hasn't changed
+                const pendingTasks = adapter.getTasksByStatus("pending");
+                const runningTasks = adapter.getTasksByStatus("running");
+                const initialPendingCount = pendingTasks.length;
+                const initialRunningCount = runningTasks.length;
+
+                // Try claim with empty array again
+                adapter.claimTask([], "test-worker");
+
+                // Verify counts remain the same
+                assert.equal(adapter.getTasksByStatus("pending").length, initialPendingCount);
+                assert.equal(adapter.getTasksByStatus("running").length, initialRunningCount);
             });
         });
 
