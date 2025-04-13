@@ -12,13 +12,55 @@ The task handler system in fib-flow provides a flexible way to define and manage
 - [Best Practices](#best-practices)
 
 ## Handler Registration
-For API details, see [Task Registration](api-reference.md#task-registration).
 
-Key concepts:
-- Register specific handlers for different task types
-- Each handler can be specialized for specific task requirements
-- Multiple workers can register the same handler
-- Specialized workers can register unique handlers
+Task handlers can be registered in two forms:
+
+1. **Function Form** - Direct handler registration
+   - Simple and straightforward
+   - Uses global TaskManager defaults
+   - Best for basic task processing
+
+2. **Object Form** - Handler with configuration
+   - Provides task-type specific defaults
+   - Overrides global configuration
+   - Supports advanced task control
+
+Example:
+```javascript
+// Function form - uses global defaults
+taskManager.use('simpleTask', async (task) => {
+    return { result: 'done' };
+});
+
+// Object form - with task-specific defaults
+taskManager.use('complexTask', {
+    handler: async (task) => {
+        return { result: 'done' };
+    },
+    timeout: 120,       // 2 minutes timeout
+    max_retries: 2,     // Maximum 2 retries
+    retry_interval: 30, // Retry every 30 seconds
+    priority: 5         // Higher priority for this task type
+});
+```
+
+### Configuration Options
+
+When using object form registration, the following options are available:
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| handler | Function | Required | Task implementation function |
+| timeout | Number | 60 | Task execution timeout in seconds |
+| max_retries | Number | 3 | Maximum retry attempts |
+| retry_interval | Number | 0 | Delay between retries in seconds |
+| priority | Number | - | Default priority level for tasks |
+
+Notes:
+- Handler options take precedence over global TaskManager options
+- Options can be overridden per task instance
+- Function form handlers use global TaskManager defaults
+- Invalid handler registration will throw an error
 
 ## Worker Specialization
 

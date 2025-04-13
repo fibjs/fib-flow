@@ -52,7 +52,9 @@ Key workflow-specific state behaviors:
   * Cron parent tasks → `paused`
 - No parent task callback on child failure - state changes are automatic
 
-State transition rules in workflows:
+Configuration inheritance rules:
+- Task-specific defaults from handler registration are applied first
+- Task instance options override handler defaults
 - Child tasks inherit retry settings from parent unless explicitly overridden
 - Parent tasks remain `suspended` until all children reach terminal states
 - Cancelling a parent task automatically cancels all pending children

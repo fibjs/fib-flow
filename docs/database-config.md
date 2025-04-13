@@ -240,3 +240,29 @@ idx_task_workflow (parent_id, status, completed_children)
 -- Task statistics
 idx_task_stats (tag, name, status)
 ```
+
+## Global Options
+When initializing TaskManager, you can configure the following global options that affect task execution and database operations:
+
+```javascript
+const taskManager = new TaskManager({
+    // Database connection options
+    dbConnection: 'sqlite:tasks.db',
+    dbType: 'sqlite',
+    
+    // Task execution defaults
+    poll_interval: 1000,      // How often to check for new tasks (ms)
+    max_retries: 3,          // Default retry attempts
+    retry_interval: 0,       // No delay between retries (seconds)
+    timeout: 60,            // Default task timeout (seconds)
+    
+    // Worker configuration
+    max_concurrent_tasks: 10,
+    active_update_interval: 1000,
+    worker_id: 'worker-123'  // Optional custom worker ID
+});
+```
+
+These settings provide the baseline configuration for all tasks. Individual tasks can override certain options (timeout, retries, etc.) during registration or execution.
+
+Note: When using a connection pool, you must explicitly specify the database type using the `dbType` option.

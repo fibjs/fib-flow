@@ -23,7 +23,8 @@ The TaskManager is the core component responsible for managing task lifecycles, 
  * @param {string} [options.dbType] Database type ('sqlite', 'mysql', or 'postgres')
  * @param {number} [options.poll_interval=1000] Poll interval in milliseconds
  * @param {number} [options.max_retries=3] Default maximum retry attempts
- * @param {number} [options.retry_interval=300] Default retry interval in seconds
+ * @param {number} [options.retry_interval=0] Default retry interval in seconds
+ * @param {number} [options.timeout=60] Default task timeout in seconds
  * @param {number} [options.max_concurrent_tasks=10] Maximum concurrent tasks
  * @param {number} [options.active_update_interval=1000] Active time update interval
  */
@@ -32,55 +33,151 @@ new TaskManager(options)
 
 ### Task Registration
 
-Tasks must be registered with handlers before they can be executed. There are two ways to register task handlers:
+Tasks must be registered with handlers before they can be executed. The TaskManager provides flexible handler registration through the `use()` method.
 
-#### Single Task Registration
-Register a single task type with its handler:
+#### Function Form Registration
 ```javascript
 /**
- * Register a single task handler
+ * Register a task handler using function form
  * @param {string} taskName Task type identifier
  * @param {Function} handler Async function(task, next) to handle task execution
  */
 use(taskName, handler)
+```
 
-// Example
-use('processImage', async (task) => {
-  // Process single image
-  const { path } = task.payload;
-  // ... image processing logic
-  return { processed: true };
+Example:
+```javascript
+taskManager.use('processImage', async (task) => {
+    const { path } = task.payload;
+    // Process single image
+    return { processed: true };
+});
+```
+
+#### Object Form Registration
+```javascript
+/**
+ * Register a task handler using object form with options
+ * @param {string} taskName Task type identifier
+ * @param {Object} config Handler configuration object
+ * @param {Function} config.handler Async function(task, next) to handle task execution
+ * @param {number} [config.timeout] Default timeout in seconds for this task type
+ * @param {number} [config.max_retries] Default maximum retry attempts for this task type
+ * @param {number} [config.retry_interval] Default retry interval in seconds for this task type
+ * @param {number} [config.priority] Default priority level for this task type
+ */
+use(taskName, config)
+```
+
+Example:
+```javascript
+taskManager.use('processImage', {
+    // Handler function implementation
+    handler: async (task) => {
+        const { path } = task.payload;
+        // Process single image
+        return { processed: true };
+    },
+    // Task type specific defaults
+    timeout: 120,       // 2 minutes timeout
+    max_retries: 2,     // Maximum 2 retries
+    retry_interval: 30, // Retry every 30 seconds
+    priority: 5         // Higher priority tasks
 });
 ```
 
 #### Bulk Task Registration 
-Register multiple task types at once using an object:
 ```javascript
 /**
  * Register multiple task handlers at once
- * @param {Object} handlers Object mapping task types to handler functions
+ * @param {Object} handlers Object mapping task types to handlers/configs
  */
-use({
-  // Property names are task types, values are handler functions
-  taskName: handlerFunction
-})
+use(handlersMap)
+```
 
-// Example
-use({
-  processImage: async (task) => {
-    // Process image
-    return { processed: true };
-  },
-  processVideo: async (task) => {
-    // Process video
-    return { processed: true }; 
-  },
-  processAudio: async (task) => {
-    // Process audio
-    return { processed: true };
-  }
+Example:
+```javascript
+taskManager.use({
+    // Function form handlers
+    processText: async (task) => {
+        return { processed: true };
+    },
+    
+    // Object form handlers with options
+    processImage: {
+        handler: async (task) => {
+            return { processed: true };
+        },
+        timeout: 120,
+        max_retries: 2
+    },
+    
+    processVideo: {
+        handler: async (task) => {
+            return { processed: true };
+        },
+        timeout: 300,
+        priority: 3
+    }
 });
 ```
+
+#### Handler Options
+
+When registering a task handler using the object form, you can specify the following options:
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| handler | Function | Required | The async function that processes the task |
+| timeout | Number | 60 | Task execution timeout in seconds |
+| max_retries | Number | 3 | Maximum number of retry attempts |
+| retry_interval | Number | 0 | Delay between retries in seconds |
+| priority | Number | - | Default priority for all tasks of this type |
+
+Notes:
+- Options specified during handler registration become the defaults for that task type
+- These defaults can be overridden when creating individual tasks
+- Handler options take precedence over global TaskManager options
+- If a handler is registered as a function, it will use the global TaskManager options
+
+### Task Options
+
+Task execution can be configured through two levels:
+
+1. **Global Configuration** (TaskManager level)
+```javascript
+const taskManager = new TaskManager({
+    poll_interval: 1000,      // Poll interval in milliseconds
+    max_retries: 3,          // Maximum retry attempts
+    retry_interval: 0,       // No delay between retries
+    timeout: 60,            // Default task timeout
+    max_concurrent_tasks: 10 // Maximum concurrent tasks
+});
+```
+
+2. **Task Type Configuration** (Handler registration level)
+```javascript
+taskManager.use('processImage', {
+    handler: async (task) => { /* ... */ },
+    timeout: 120,      // 2 minutes timeout
+    max_retries: 2,    // Maximum 2 retries
+    retry_interval: 30 // 30 seconds retry interval
+});
+```
+
+3. **Task Instance Configuration** (Task creation level)
+```javascript
+taskManager.async('processImage', payload, {
+    timeout: 180,      // Override timeout for this task
+    max_retries: 5,    // Override retry attempts
+    retry_interval: 60 // Override retry interval
+});
+```
+
+Configuration Priority (highest to lowest):
+1. Task Instance Options
+2. Task Type (Handler) Options
+3. Global TaskManager Options
 
 ### Task Creation
 Tasks can be created in two modes: async (one-time) tasks and cron (scheduled) tasks. Each task can be configured with specific execution parameters.

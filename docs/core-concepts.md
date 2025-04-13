@@ -8,6 +8,7 @@ This document provides a comprehensive overview of the core concepts in fib-flow
   - [State Transitions](#state-transitions)
   - [State Diagram](#state-diagram)
 - [Task Types](#task-types)
+  - [Task Handler Configuration](#task-handler-configuration)
   - [Async Tasks](#async-tasks)
   - [Cron Tasks](#cron-tasks)
 - [Error Handling](#error-handling)
@@ -110,6 +111,29 @@ graph LR
 ```
 
 ## Task Types
+
+### Task Handler Configuration
+Task handlers can be registered in two forms:
+- Function Form: Direct handler registration with global defaults
+- Object Form: Registration with task-specific configuration options
+
+```javascript
+// Function form - uses global defaults
+taskManager.use('simpleTask', async (task) => {
+    return { result: 'done' };
+});
+
+// Object form - with task-specific defaults
+taskManager.use('complexTask', {
+    handler: async (task) => {
+        return { result: 'done' };
+    },
+    timeout: 120,       // Task-specific timeout
+    max_retries: 2,     // Task-specific retry limit
+    retry_interval: 30, // Task-specific retry interval
+    priority: 5         // Task-specific priority
+});
+```
 
 ### Async Tasks
 - One-time execution tasks that run exactly once

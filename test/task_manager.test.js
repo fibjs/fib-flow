@@ -38,7 +38,7 @@ describe('TaskManager Initialization', () => {
         // Check default configuration options
         assert.equal(taskManager.options.poll_interval, 1000, 'Default poll_interval should be 1000');
         assert.equal(taskManager.options.max_retries, 3, 'Default max_retries should be 3');
-        assert.equal(taskManager.options.retry_interval, 300, 'Default retry_interval should be 300');
+        assert.equal(taskManager.options.retry_interval, 0, 'Default retry_interval should be 0');
         assert.equal(taskManager.options.max_concurrent_tasks, 10, 'Default max_concurrent_tasks should be 10');
         assert.equal(taskManager.options.active_update_interval, 1000, 'Default active_update_interval should be 1000');
         

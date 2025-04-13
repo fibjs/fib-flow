@@ -35,7 +35,8 @@ const taskManager = new TaskManager({
     dbConnection: 'sqlite:tasks.db',  // Database connection string
     poll_interval: 1000,           // Poll interval in milliseconds
     max_retries: 3,               // Maximum retry attempts
-    retry_interval: 300,          // Retry interval in seconds
+    retry_interval: 0,            // No delay between retries
+    timeout: 60,                  // Default task timeout in seconds
     max_concurrent_tasks: 10      // Maximum concurrent tasks
 });
 
@@ -51,17 +52,38 @@ Configuration Options:
 - `poll_interval`: How often to check for new tasks (in milliseconds)
 - `max_retries`: Number of retry attempts for failed tasks
 - `retry_interval`: Time to wait before retrying (in seconds)
+- `timeout`: Default task execution timeout (in seconds)
 - `max_concurrent_tasks`: Maximum number of tasks running simultaneously
 
 ### Task Registration
 ```javascript
-// Register task handlers
+// Basic handler registration
 taskManager.use('sendEmail', async (task) => {
     const { to, subject, body } = task.payload;
     await sendEmail(to, subject, body);
     return { sent: true };
 });
+
+// Handler registration with options
+taskManager.use('processImage', {
+    handler: async (task) => {
+        const { path } = task.payload;
+        await processImage(path);
+        return { processed: true };
+    },
+    timeout: 120,       // 2 minutes timeout
+    max_retries: 2,     // Maximum 2 retries
+    retry_interval: 30, // Retry every 30 seconds
+    priority: 5         // Higher priority task
+});
 ```
+
+Task Handler Options:
+- `handler`: The function that processes the task
+- `timeout`: Task-specific timeout in seconds
+- `max_retries`: Maximum retry attempts for this task type
+- `retry_interval`: Retry interval in seconds
+- `priority`: Default priority for this task type
 
 Task Handler Parameters:
 - `task.payload`: Contains the task input data

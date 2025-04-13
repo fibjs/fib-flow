@@ -26,11 +26,23 @@ const { TaskManager } = require('fib-flow');
 const taskManager = new TaskManager();
 taskManager.db.setup();
 
-// Register task handler
+// Basic task handler
 taskManager.use('sendEmail', async (task) => {
     const { to, subject, body } = task.payload;
     await sendEmail(to, subject, body);
     return { sent: true };
+});
+
+// Handler with configuration
+taskManager.use('processImage', {
+    handler: async (task) => {
+        const { path } = task.payload;
+        await processImage(path);
+        return { processed: true };
+    },
+    timeout: 120,      // 2 minutes timeout
+    max_retries: 2,    // Maximum 2 retries
+    retry_interval: 30 // 30 seconds retry interval
 });
 
 // Start processing
