@@ -301,6 +301,61 @@ Status Values:
 - paused: Task manually paused
 - suspended: Parent task waiting for children
 
+#### deleteTasks
+The `deleteTasks` method provides flexible task deletion with multiple filter conditions:
+
+```javascript
+/**
+ * Delete tasks with multiple filter conditions
+ * @param {Object} filters Filter conditions
+ * @param {string} [filters.tag] Filter by tag
+ * @param {string} [filters.status] Filter by status ("pending", "running", "completed", etc)
+ * @param {string} [filters.name] Filter by task name
+ * @returns {number} Number of tasks deleted
+ * @throws {Error} If status is invalid
+ */
+deleteTasks(filters)
+```
+
+Examples:
+
+```javascript
+// Delete tasks with a specific tag
+const deletedCount = taskManager.deleteTasks({ tag: "cleanup" });
+
+// Delete completed tasks
+const deletedCompleted = taskManager.deleteTasks({ status: "completed" });
+
+// Delete tasks of a specific type
+const deletedByName = taskManager.deleteTasks({ name: "processImage" });
+
+// Delete tasks matching multiple conditions
+const deletedMulti = taskManager.deleteTasks({
+    tag: "batch-1",
+    status: "failed",
+    name: "videoProcess"
+});
+
+// Delete all tasks (empty filter)
+const deletedAll = taskManager.deleteTasks({});
+```
+
+Filter Behavior:
+- Multiple filters are combined with AND logic
+- If a filter is not provided, that condition is not applied
+- Empty filters object deletes all tasks
+- Invalid filter values will throw an error for status, but be ignored for tag and name
+
+Status Values:
+- pending: Task waiting to be executed
+- running: Task currently being executed
+- completed: Task finished successfully
+- failed: Task execution failed
+- timeout: Task exceeded timeout duration
+- permanently_failed: Failed task that exceeded retry attempts
+- paused: Task manually paused
+- suspended: Parent task waiting for children
+
 ### Task Lifecycle
 Task handlers receive task objects that contain comprehensive information about the task and provide methods for controlling task execution.
 

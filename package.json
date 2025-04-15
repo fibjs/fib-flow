@@ -1,6 +1,6 @@
 {
     "name": "fib-flow",
-    "version": "3.2.0",
+    "version": "3.3.0",
     "description": "A robust workflow management system for fibjs with task orchestration, state management, and distributed execution capabilities",
     "main": "lib/index.js",
     "scripts": {

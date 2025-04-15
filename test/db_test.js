@@ -395,6 +395,119 @@ describe("TaskManager DB Connection", () => {
                 });
                 assert.ok(Array.isArray(result));
             });
+
+            it("should delete tasks with filter conditions", () => {
+                // Create test tasks with various combinations
+                adapter.insertTask({
+                    name: "delete_task1",
+                    type: "async",
+                    tag: "delete_tag",
+                    status: "pending",
+                    payload: { data: "test1" }
+                });
+
+                adapter.insertTask({
+                    name: "delete_task1",
+                    type: "async",
+                    tag: "delete_tag",
+                    status: "completed",
+                    payload: { data: "test2" }
+                });
+
+                adapter.insertTask({
+                    name: "delete_task2",
+                    type: "async",
+                    tag: "other_tag",
+                    status: "pending",
+                    payload: { data: "test3" }
+                });
+
+                // Test delete by tag
+                let deletedCount = adapter.deleteTasks({ tag: "delete_tag" });
+                assert.equal(deletedCount, 2);
+                let remainingTasks = adapter.getTasks({ tag: "delete_tag" });
+                assert.equal(remainingTasks.length, 0);
+
+                // Test delete by status
+                adapter.insertTask({
+                    name: "delete_task3",
+                    type: "async",
+                    status: "completed",
+                    payload: { data: "test4" }
+                });
+                adapter.insertTask({
+                    name: "delete_task4", 
+                    type: "async",
+                    status: "completed",
+                    payload: { data: "test5" }
+                });
+
+                deletedCount = adapter.deleteTasks({ status: "completed" });
+                assert.equal(deletedCount, 2);
+                remainingTasks = adapter.getTasks({ status: "completed" });
+                assert.equal(remainingTasks.length, 0);
+
+                // Test delete by name
+                adapter.insertTask({
+                    name: "delete_task5",
+                    type: "async",
+                    payload: { data: "test6" }
+                });
+                adapter.insertTask({
+                    name: "delete_task5",
+                    type: "async", 
+                    payload: { data: "test7" }
+                });
+
+                deletedCount = adapter.deleteTasks({ name: "delete_task5" });
+                assert.equal(deletedCount, 2);
+                remainingTasks = adapter.getTasks({ name: "delete_task5" });
+                assert.equal(remainingTasks.length, 0);
+
+                // Test delete with multiple conditions
+                adapter.insertTask({
+                    name: "multi_delete",
+                    type: "async",
+                    tag: "multi_tag",
+                    status: "pending",
+                    payload: { data: "test8" }
+                });
+                adapter.insertTask({
+                    name: "multi_delete",
+                    type: "async",
+                    tag: "multi_tag",
+                    status: "completed",
+                    payload: { data: "test9" }
+                });
+
+                deletedCount = adapter.deleteTasks({
+                    name: "multi_delete",
+                    tag: "multi_tag",
+                    status: "pending"
+                });
+                assert.equal(deletedCount, 1);
+                remainingTasks = adapter.getTasks({ name: "multi_delete" });
+                assert.equal(remainingTasks.length, 1);
+                assert.equal(remainingTasks[0].status, "completed");
+            });
+
+            it("should handle invalid delete parameters gracefully", () => {
+                // Test with empty filters object
+                const deletedCount = adapter.deleteTasks({});
+                assert.ok(typeof deletedCount === 'number');
+
+                // Test with invalid status
+                assert.throws(() => {
+                    adapter.deleteTasks({ status: "invalid_status" });
+                }, /Invalid status value/);
+
+                // Test with non-string values
+                const result = adapter.deleteTasks({
+                    tag: 123,
+                    name: true
+                });
+                assert.ok(typeof result === 'number');
+            });
         });
 
         describe("Priority and Scheduling", () => {
