@@ -225,6 +225,9 @@ pauseTask(taskId)
 ### Task Query
 Query methods allow you to retrieve task information and monitor task status across the system.
 ```javascript
+// Get tasks with multiple filter conditions
+getTasks(filters)
+
 // Get a specific task
 getTask(taskId)
 
@@ -243,6 +246,60 @@ getTasksByTag(tag)
 // Get task statistics by tag
 getTaskStatsByTag(tag, status)
 ```
+
+#### getTasks
+The `getTasks` method provides flexible task querying with multiple filter conditions:
+
+```javascript
+/**
+ * Get tasks with multiple filter conditions
+ * @param {Object} filters Filter conditions
+ * @param {string} [filters.tag] Filter by tag
+ * @param {string} [filters.status] Filter by status ("pending", "running", "completed", etc)
+ * @param {string} [filters.name] Filter by task name
+ * @returns {Array<Object>} Array of matching tasks
+ */
+getTasks(filters)
+```
+
+Examples:
+
+```javascript
+// Get tasks with a specific tag
+const taggedTasks = taskManager.getTasks({ tag: "image-processing" });
+
+// Get pending tasks for a specific task type
+const pendingImageTasks = taskManager.getTasks({ 
+    name: "processImage",
+    status: "pending"
+});
+
+// Complex filtering with multiple conditions
+const tasks = taskManager.getTasks({
+    tag: "batch-1",
+    status: "running",
+    name: "videoProcess"
+});
+
+// Get all tasks (empty filter)
+const allTasks = taskManager.getTasks({});
+```
+
+Filter Priority:
+- Multiple filters are combined with AND logic
+- If a filter is not provided, that condition is not applied
+- Empty filters object returns all tasks
+- Invalid filter values will throw an error for status, but be ignored for tag and name
+
+Status Values:
+- pending: Task waiting to be executed
+- running: Task currently being executed
+- completed: Task finished successfully
+- failed: Task execution failed
+- timeout: Task exceeded timeout duration
+- permanently_failed: Failed task that exceeded retry attempts
+- paused: Task manually paused
+- suspended: Parent task waiting for children
 
 ### Task Lifecycle
 Task handlers receive task objects that contain comprehensive information about the task and provide methods for controlling task execution.

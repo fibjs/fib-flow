@@ -324,6 +324,77 @@ describe("TaskManager DB Connection", () => {
                     adapter.getTasksByName();
                 }, /Task name is required/);
             });
+
+            it("should filter tasks with multiple conditions", () => {
+                // Create test tasks with various combinations
+                adapter.insertTask({
+                    name: "filter_task1",
+                    type: "async",
+                    tag: "filter_tag",
+                    status: "pending",
+                    payload: { data: "test1" }
+                });
+
+                adapter.insertTask({
+                    name: "filter_task1",
+                    type: "async",
+                    tag: "filter_tag",
+                    status: "completed",
+                    payload: { data: "test2" }
+                });
+
+                adapter.insertTask({
+                    name: "filter_task2",
+                    type: "async",
+                    tag: "other_tag",
+                    status: "pending",
+                    payload: { data: "test3" }
+                });
+
+                // Test single filter
+                let tasks = adapter.getTasks({ tag: "filter_tag" });
+                assert.equal(tasks.length, 2);
+                assert.ok(tasks.every(task => task.tag === "filter_tag"));
+
+                // Test multiple filters
+                tasks = adapter.getTasks({ 
+                    tag: "filter_tag", 
+                    status: "pending",
+                    name: "filter_task1"
+                });
+                assert.equal(tasks.length, 1);
+                assert.equal(tasks[0].payload.data, "test1");
+
+                // Test no matches
+                tasks = adapter.getTasks({ 
+                    tag: "non_existent_tag",
+                    status: "pending"
+                });
+                assert.equal(tasks.length, 0);
+
+                // Test partial matches
+                tasks = adapter.getTasks({ name: "filter_task1" });
+                assert.equal(tasks.length, 2);
+                assert.ok(tasks.every(task => task.name === "filter_task1"));
+            });
+
+            it("should handle invalid filter parameters gracefully", () => {
+                // Test with empty filters object
+                const tasks = adapter.getTasks({});
+                assert.ok(Array.isArray(tasks));
+
+                // Test with invalid status
+                assert.throws(() => {
+                    adapter.getTasks({ status: "invalid_status" });
+                }, /Invalid status value/);
+
+                // Test with non-string values
+                const result = adapter.getTasks({
+                    tag: 123,
+                    name: true
+                });
+                assert.ok(Array.isArray(result));
+            });
         });
 
         describe("Priority and Scheduling", () => {
