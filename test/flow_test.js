@@ -116,7 +116,7 @@ describe("Workflow Tests", () => {
         const children = taskManager.getChildTasks(parentTaskId);
         assert.equal(children.length, 1);
         assert.equal(children[0].status, 'permanently_failed');
-        assert.equal(children[0].error, 'Intentional failure');
+        assert.equal(children[0].error.split('\n')[0], 'Error: Intentional failure');
     });
 
     it("should handle nested workflows", () => {

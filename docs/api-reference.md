@@ -133,12 +133,14 @@ When registering a task handler using the object form, you can specify the follo
 | max_retries | Number | 3 | Maximum number of retry attempts |
 | retry_interval | Number | 0 | Delay between retries in seconds |
 | priority | Number | - | Default priority for all tasks of this type |
+| max_concurrent_tasks | Number | - | Maximum number of concurrent tasks of this type |
 
 Notes:
 - Options specified during handler registration become the defaults for that task type
 - These defaults can be overridden when creating individual tasks
 - Handler options take precedence over global TaskManager options
 - If a handler is registered as a function, it will use the global TaskManager options
+- When max_concurrent_tasks is set, the system will ensure no more than that many tasks of this type run simultaneously
 
 ### Task Options
 
