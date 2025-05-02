@@ -200,6 +200,182 @@ describe("TaskManager DB Connection", () => {
                 assert.equal(adapter.getTasksByStatus("pending").length, initialPendingCount);
                 assert.equal(adapter.getTasksByStatus("running").length, initialRunningCount);
             });
+
+            it("should handle tasks timeout with last_active_time", () => {
+                const taskId = adapter.insertTask({
+                    name: "active_time_test",
+                    type: "async",
+                    timeout: 60,
+                    max_retries: 1
+                });
+
+                // Claim the task
+                adapter.claimTask(["active_time_test"], "test-worker");
+                
+                // Set last_active_time to a past time
+                const now = Math.floor(Date.now() / 1000);
+                adapter.pool(conn => {
+                    conn.execute(
+                        'UPDATE fib_flow_tasks SET last_active_time = ? WHERE id = ?',
+                        now - 300, // 5 minutes ago
+                        taskId
+                    );
+                });
+
+                // First call to handleTimeoutTasks - should mark task as timeout
+                adapter.handleTimeoutTasks(1000); 
+
+                // Verify task is marked as timeout first
+                let task = adapter.getTask(taskId);
+                assert.equal(task.status, "timeout");
+                assert.ok(task.error.includes("Task heartbeat lost"));
+
+                coroutine.sleep(1000); // Wait for a second
+
+                // Second call to handleTimeoutTasks - should trigger retry
+                adapter.handleTimeoutTasks(1000);
+                
+                // Now verify task becomes pending with incremented retry count
+                task = adapter.getTask(taskId);
+                assert.equal(task.status, "pending");
+                assert.equal(task.retry_count, 1);
+            });
+
+            it("should handle task timeout scenarios", () => {
+                const now = Math.floor(Date.now() / 1000);
+                
+                // 1. Test total timeout (task running too long)
+                const totalTimeoutTaskId = adapter.insertTask({
+                    name: "total_timeout_test",
+                    type: "async",
+                    timeout: 60,
+                    max_retries: 2
+                });
+                
+                // Claim the task and set start_time to simulate long-running task
+                adapter.claimTask(["total_timeout_test"], "test-worker");
+                adapter.pool(conn => {
+                    conn.execute(
+                        'UPDATE fib_flow_tasks SET start_time = ? WHERE id = ?',
+                        now - 120, // 2 minutes ago, exceeding 60s timeout
+                        totalTimeoutTaskId
+                    );
+                });
+
+                // 2. Test heartbeat timeout (inactive task)
+                const heartbeatTimeoutTaskId = adapter.insertTask({
+                    name: "heartbeat_timeout_test",
+                    type: "async",
+                    timeout: 60,
+                    max_retries: 2
+                });
+                
+                adapter.claimTask(["heartbeat_timeout_test"], "test-worker");
+                adapter.pool(conn => {
+                    conn.execute(
+                        'UPDATE fib_flow_tasks SET last_active_time = ? WHERE id = ?',
+                        now - 300, // 5 minutes ago, exceeding 5 * active_update_interval
+                        heartbeatTimeoutTaskId
+                    );
+                });
+
+                // 3. Test retry mechanism for async task
+                const retryTaskId = adapter.insertTask({
+                    name: "retry_test",
+                    type: "async",
+                    max_retries: 2,
+                    timeout: 60
+                });
+                
+                adapter.claimTask(["retry_test"], "test-worker");
+                adapter.pool(conn => {
+                    conn.execute(
+                        'UPDATE fib_flow_tasks SET last_active_time = ? WHERE id = ?',
+                        now - 300,
+                        retryTaskId
+                    );
+                });
+
+                // 4. Test cron task final state
+                const cronTaskId = adapter.insertTask({
+                    name: "cron_timeout_test",
+                    type: "cron",
+                    cron_expr: "*/5 * * * *",
+                    max_retries: 1,
+                    timeout: 60
+                });
+                
+                adapter.claimTask(["cron_timeout_test"], "test-worker");
+                adapter.pool(conn => {
+                    conn.execute(
+                        'UPDATE fib_flow_tasks SET last_active_time = ?, retry_count = 1 WHERE id = ?',
+                        now - 300,
+                        cronTaskId
+                    );
+                });
+
+                // First call to handleTimeoutTasks - should mark tasks as timeout
+                adapter.handleTimeoutTasks(1000); // 1 second active update interval
+
+                // Verify total timeout task is marked as timeout
+                let task = adapter.getTask(totalTimeoutTaskId);
+                assert.equal(task.status, "timeout");
+                assert.ok(task.error.includes("Task exceeded total timeout limit"));
+
+                // Verify heartbeat timeout task is marked as timeout
+                task = adapter.getTask(heartbeatTimeoutTaskId);
+                assert.equal(task.status, "timeout");
+                assert.ok(task.error.includes("Task heartbeat lost"));
+
+                // Verify retry task is marked as timeout first
+                task = adapter.getTask(retryTaskId);
+                assert.equal(task.status, "timeout");
+
+                coroutine.sleep(1000); // Wait for a second
+                
+                // Second call to handleTimeoutTasks - should trigger retries
+                adapter.handleTimeoutTasks(1000);
+                
+                // Verify tasks are now pending with incremented retry count
+                task = adapter.getTask(totalTimeoutTaskId);
+                assert.equal(task.status, "pending");
+                assert.equal(task.retry_count, 1);
+                assert.ok(task.next_run_time > now);
+
+                task = adapter.getTask(heartbeatTimeoutTaskId);
+                assert.equal(task.status, "pending");
+                assert.equal(task.retry_count, 1);
+                assert.ok(task.next_run_time > now);
+                
+                task = adapter.getTask(retryTaskId);
+                assert.equal(task.status, "pending");
+                assert.equal(task.retry_count, 1);
+                assert.ok(task.next_run_time > now);
+                
+                // Set retry count to max to test retry exhaustion
+                adapter.pool(conn => {
+                    conn.execute(
+                        'UPDATE fib_flow_tasks SET status = ?, last_active_time = ?, retry_count = 2 WHERE id = ?',
+                        'timeout',
+                        now - 300,
+                        retryTaskId
+                    );
+                });
+                
+                // Wait for retry_interval to pass
+                coroutine.sleep(1200);
+                
+                // Third call to handleTimeoutTasks - should handle retry exhaustion
+                adapter.handleTimeoutTasks(1000);
+                
+                // Verify retry task final state (should be permanently failed)
+                task = adapter.getTask(retryTaskId);
+                assert.equal(task.status, "permanently_failed");
+
+                // Verify cron task final state (should be paused)
+                task = adapter.getTask(cronTaskId);
+                assert.equal(task.status, "paused");
+            });
         });
 
         describe("Worker Management", () => {
