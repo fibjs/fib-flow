@@ -46,6 +46,92 @@ describe('TaskManager Initialization', () => {
         assert.ok(taskManager.options.worker_id, 'Worker ID should be generated');
         assert.ok(taskManager.options.worker_id.startsWith('worker-'), 'Worker ID should start with "worker-"');
     });
+
+    it('should submit tasks before starting TaskManager', () => {
+        const taskManager = new TaskManager();
+        taskManager.db.setup();
+
+        // Register handler first
+        taskManager.use('testTask', task => {
+            return { success: true };
+        });
+
+        // Submit async task before start
+        const asyncTaskId = taskManager.async('testTask', { data: 'test' });
+        assert.ok(asyncTaskId, 'Should create async task before start');
+
+        // Submit cron task before start
+        const cronTaskId = taskManager.cron('testTask', '*/5 * * * *', { data: 'test' });
+        assert.ok(cronTaskId, 'Should create cron task before start');
+
+        // Start TaskManager and verify tasks execute
+        taskManager.start();
+        coroutine.sleep(100);
+
+        const asyncTask = taskManager.getTask(asyncTaskId);
+        assert.equal(asyncTask.status, 'completed', 'Async task should complete after start');
+
+        const cronTask = taskManager.getTask(cronTaskId);
+        assert.equal(cronTask.status, 'pending', 'Cron task should be pending for next run');
+
+        taskManager.stop();
+    });
+
+    it('should allow task management operations before start', () => {
+        const taskManager = new TaskManager();
+        taskManager.db.setup();
+
+        // Register handler
+        taskManager.use('managedTask', task => {
+            return { success: true };
+        });
+
+        // Create initial tasks
+        const taskId1 = taskManager.async('managedTask', { data: '1' });
+        const taskId2 = taskManager.async('managedTask', { data: '2' });
+
+        // Test pause/resume operations before start
+        taskManager.pauseTask(taskId1);
+        const pausedTask = taskManager.getTask(taskId1);
+        assert.equal(pausedTask.status, 'paused', 'Should pause task before start');
+
+        taskManager.resumeTask(taskId1);
+        const resumedTask = taskManager.getTask(taskId1);
+        assert.equal(resumedTask.status, 'pending', 'Should resume task before start');
+
+        // Test delete operation before start
+        const deletedCount = taskManager.deleteTasks({ name: 'managedTask' });
+        assert.equal(deletedCount, 2, 'Should delete tasks before start');
+
+        taskManager.stop();
+    });
+
+    it('should handle task operations in different manager states', () => {
+        const taskManager = new TaskManager();
+        taskManager.db.setup();
+
+        // Register handler
+        taskManager.use('stateTask', task => {
+            return { success: true };
+        });
+
+        // Test operations in init state
+        const initTaskId = taskManager.async('stateTask', { state: 'init' });
+        assert.ok(initTaskId, 'Should create task in init state');
+
+        // Start and immediately pause
+        taskManager.start();
+        taskManager.pause();
+
+        // Test operations in paused state
+        const pausedTaskId = taskManager.async('stateTask', { state: 'paused' });
+        assert.ok(pausedTaskId, 'Should create task in paused state');
+
+        // Resume and stop
+        taskManager.resume();
+        coroutine.sleep(100);
+        taskManager.stop();
+    });
 });
 
 describe('Task Tags', () => {
