@@ -376,6 +376,66 @@ describe("TaskManager DB Connection", () => {
                 task = adapter.getTask(cronTaskId);
                 assert.equal(task.status, "paused");
             });
+
+            it("should delete expired completed and failed tasks", () => {
+                const now = Math.floor(Date.now() / 1000);
+                
+                // Create test tasks
+                const completedTaskId = adapter.insertTask({
+                    name: "completed_task",
+                    type: "async"
+                });
+                
+                const failedTaskId = adapter.insertTask({
+                    name: "failed_task", 
+                    type: "async"
+                });
+
+                // Mark tasks as completed/failed and set last_active_time
+                adapter.pool(conn => {
+                    conn.execute(
+                        'UPDATE fib_flow_tasks SET status = ?, last_active_time = ? WHERE id = ?',
+                        'completed',
+                        now - 3600, // 1 hour ago
+                        completedTaskId
+                    );
+                    
+                    conn.execute(
+                        'UPDATE fib_flow_tasks SET status = ?, last_active_time = ? WHERE id = ?',
+                        'permanently_failed',
+                        now - 3600,
+                        failedTaskId
+                    );
+                });
+
+                // Call handleTimeoutTasks with 30 minute expiry
+                adapter.handleTimeoutTasks(1000, 1800); // 30 minutes
+                
+                // Verify tasks were deleted
+                assert.equal(adapter.getTask(completedTaskId), null);
+                assert.equal(adapter.getTask(failedTaskId), null);
+                
+                // Create tasks that should not expire
+                const activeCompletedId = adapter.insertTask({
+                    name: "active_completed",
+                    type: "async"
+                });
+                
+                adapter.pool(conn => {
+                    conn.execute(
+                        'UPDATE fib_flow_tasks SET status = ?, last_active_time = ? WHERE id = ?',
+                        'completed',
+                        now - 900, // 15 minutes ago
+                        activeCompletedId
+                    );
+                });
+
+                // Verify recent tasks not deleted
+                adapter.handleTimeoutTasks(1000, 1800);
+                const activeTask = adapter.getTask(activeCompletedId);
+                assert.ok(activeTask);
+                assert.equal(activeTask.status, 'completed');
+            });
         });
 
         describe("Worker Management", () => {

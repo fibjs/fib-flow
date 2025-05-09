@@ -26,7 +26,9 @@ The TaskManager is the core component responsible for managing task lifecycles, 
  * @param {number} [options.retry_interval=0] Default retry interval in seconds
  * @param {number} [options.timeout=60] Default task timeout in seconds
  * @param {number} [options.max_concurrent_tasks=10] Maximum concurrent tasks
- * @param {number} [options.active_update_interval=1000] Active time update interval
+ * @param {number} [options.active_update_interval=1000] Active time update interval in milliseconds
+ * @param {string} [options.worker_id] Unique identifier for this worker (auto-generated if not provided)  
+ * @param {number} [options.expire_time=86400] Time in seconds after which completed/failed tasks are deleted (1 day)
  */
 new TaskManager(options)
 ```
@@ -144,16 +146,18 @@ Notes:
 
 ### Task Options
 
-Task execution can be configured through two levels:
+Task execution can be configured through three levels:
 
 1. **Global Configuration** (TaskManager level)
 ```javascript
 const taskManager = new TaskManager({
-    poll_interval: 1000,      // Poll interval in milliseconds
-    max_retries: 3,          // Maximum retry attempts
-    retry_interval: 0,       // No delay between retries
-    timeout: 60,            // Default task timeout
-    max_concurrent_tasks: 10 // Maximum concurrent tasks
+    poll_interval: 1000,          // Poll interval in milliseconds
+    max_retries: 3,              // Maximum retry attempts
+    retry_interval: 0,           // No delay between retries
+    timeout: 60,                // Default task timeout in seconds
+    max_concurrent_tasks: 10,   // Maximum concurrent tasks
+    active_update_interval: 1000, // Active time update interval
+    expire_time: 86400          // Task expiration time (1 day)
 });
 ```
 
@@ -161,9 +165,11 @@ const taskManager = new TaskManager({
 ```javascript
 taskManager.use('processImage', {
     handler: async (task) => { /* ... */ },
-    timeout: 120,      // 2 minutes timeout
-    max_retries: 2,    // Maximum 2 retries
-    retry_interval: 30 // 30 seconds retry interval
+    timeout: 120,           // 2 minutes timeout
+    max_retries: 2,        // Maximum 2 retries
+    retry_interval: 30,    // 30 seconds retry interval
+    priority: 5,           // Higher priority tasks
+    max_concurrent_tasks: 5 // Max 5 concurrent tasks of this type
 });
 ```
 
@@ -211,16 +217,40 @@ cron(taskName, cronExpr, payload, options)
 ### Task Control
 Task control methods provide ways to manage the TaskManager instance and individual task execution.
 ```javascript
-// Start the TaskManager and begin processing tasks
+/**
+ * Start the TaskManager and begin processing tasks
+ * Initializes task polling and monitoring
+ * @throws {Error} If TaskManager is already stopped
+ */
 start()
 
-// Stop the TaskManager and cleanup resources
+/**
+ * Stop the TaskManager and cleanup resources
+ * Waits for running tasks to complete and closes database connections
+ */
 stop()
 
-// Resume a specific paused task by ID
+/**
+ * Pause task processing without stopping the TaskManager
+ * Tasks in progress will complete, but new tasks won't be started
+ */
+pause()
+
+/**
+ * Resume task processing after a pause
+ */
+resume()
+
+/**
+ * Resume a specific paused task by ID
+ * @param {string} taskId Task ID
+ */
 resumeTask(taskId)
 
-// Pause a specific running task by ID
+/**
+ * Pause a specific running task by ID
+ * @param {string} taskId Task ID
+ */
 pauseTask(taskId)
 ```
 
@@ -247,6 +277,9 @@ getTasksByTag(tag)
 
 // Get task statistics by tag
 getTaskStatsByTag(tag, status)
+
+// Delete tasks with multiple filter conditions
+deleteTasks(filters)
 ```
 
 #### getTasks
