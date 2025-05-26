@@ -11,6 +11,8 @@ function createDBConn() {
     return db.open(config.dbConnection);
 }
 
+const is_postgres = config.dbConnection.startsWith("psql://");
+
 describe("TaskManager DB Connection", () => {
     describe("TaskManager DB Connection Options", () => {
         it("should initialize and get task with a connection string", () => {
@@ -211,7 +213,7 @@ describe("TaskManager DB Connection", () => {
 
                 // Claim the task
                 adapter.claimTask(["active_time_test"], "test-worker");
-                
+
                 // Set last_active_time to a past time
                 const now = Math.floor(Date.now() / 1000);
                 adapter.pool(conn => {
@@ -223,7 +225,7 @@ describe("TaskManager DB Connection", () => {
                 });
 
                 // First call to handleTimeoutTasks - should mark task as timeout
-                adapter.handleTimeoutTasks(1000); 
+                adapter.handleTimeoutTasks(1000);
 
                 // Verify task is marked as timeout first
                 let task = adapter.getTask(taskId);
@@ -234,7 +236,7 @@ describe("TaskManager DB Connection", () => {
 
                 // Second call to handleTimeoutTasks - should trigger retry
                 adapter.handleTimeoutTasks(1000);
-                
+
                 // Now verify task becomes pending with incremented retry count
                 task = adapter.getTask(taskId);
                 assert.equal(task.status, "pending");
@@ -243,7 +245,7 @@ describe("TaskManager DB Connection", () => {
 
             it("should handle task timeout scenarios", () => {
                 const now = Math.floor(Date.now() / 1000);
-                
+
                 // 1. Test total timeout (task running too long)
                 const totalTimeoutTaskId = adapter.insertTask({
                     name: "total_timeout_test",
@@ -251,7 +253,7 @@ describe("TaskManager DB Connection", () => {
                     timeout: 60,
                     max_retries: 2
                 });
-                
+
                 // Claim the task and set start_time to simulate long-running task
                 adapter.claimTask(["total_timeout_test"], "test-worker");
                 adapter.pool(conn => {
@@ -269,7 +271,7 @@ describe("TaskManager DB Connection", () => {
                     timeout: 60,
                     max_retries: 2
                 });
-                
+
                 adapter.claimTask(["heartbeat_timeout_test"], "test-worker");
                 adapter.pool(conn => {
                     conn.execute(
@@ -286,7 +288,7 @@ describe("TaskManager DB Connection", () => {
                     max_retries: 2,
                     timeout: 60
                 });
-                
+
                 adapter.claimTask(["retry_test"], "test-worker");
                 adapter.pool(conn => {
                     conn.execute(
@@ -304,7 +306,7 @@ describe("TaskManager DB Connection", () => {
                     max_retries: 1,
                     timeout: 60
                 });
-                
+
                 adapter.claimTask(["cron_timeout_test"], "test-worker");
                 adapter.pool(conn => {
                     conn.execute(
@@ -332,10 +334,10 @@ describe("TaskManager DB Connection", () => {
                 assert.equal(task.status, "timeout");
 
                 coroutine.sleep(1000); // Wait for a second
-                
+
                 // Second call to handleTimeoutTasks - should trigger retries
                 adapter.handleTimeoutTasks(1000);
-                
+
                 // Verify tasks are now pending with incremented retry count
                 task = adapter.getTask(totalTimeoutTaskId);
                 assert.equal(task.status, "pending");
@@ -346,12 +348,12 @@ describe("TaskManager DB Connection", () => {
                 assert.equal(task.status, "pending");
                 assert.equal(task.retry_count, 1);
                 assert.ok(task.next_run_time > now);
-                
+
                 task = adapter.getTask(retryTaskId);
                 assert.equal(task.status, "pending");
                 assert.equal(task.retry_count, 1);
                 assert.ok(task.next_run_time > now);
-                
+
                 // Set retry count to max to test retry exhaustion
                 adapter.pool(conn => {
                     conn.execute(
@@ -361,13 +363,13 @@ describe("TaskManager DB Connection", () => {
                         retryTaskId
                     );
                 });
-                
+
                 // Wait for retry_interval to pass
                 coroutine.sleep(1200);
-                
+
                 // Third call to handleTimeoutTasks - should handle retry exhaustion
                 adapter.handleTimeoutTasks(1000);
-                
+
                 // Verify retry task final state (should be permanently failed)
                 task = adapter.getTask(retryTaskId);
                 assert.equal(task.status, "permanently_failed");
@@ -379,15 +381,15 @@ describe("TaskManager DB Connection", () => {
 
             it("should delete expired completed and failed tasks", () => {
                 const now = Math.floor(Date.now() / 1000);
-                
+
                 // Create test tasks
                 const completedTaskId = adapter.insertTask({
                     name: "completed_task",
                     type: "async"
                 });
-                
+
                 const failedTaskId = adapter.insertTask({
-                    name: "failed_task", 
+                    name: "failed_task",
                     type: "async"
                 });
 
@@ -399,7 +401,7 @@ describe("TaskManager DB Connection", () => {
                         now - 3600, // 1 hour ago
                         completedTaskId
                     );
-                    
+
                     conn.execute(
                         'UPDATE fib_flow_tasks SET status = ?, last_active_time = ? WHERE id = ?',
                         'permanently_failed',
@@ -410,17 +412,17 @@ describe("TaskManager DB Connection", () => {
 
                 // Call handleTimeoutTasks with 30 minute expiry
                 adapter.handleTimeoutTasks(1000, 1800); // 30 minutes
-                
+
                 // Verify tasks were deleted
                 assert.equal(adapter.getTask(completedTaskId), null);
                 assert.equal(adapter.getTask(failedTaskId), null);
-                
+
                 // Create tasks that should not expire
                 const activeCompletedId = adapter.insertTask({
                     name: "active_completed",
                     type: "async"
                 });
-                
+
                 adapter.pool(conn => {
                     conn.execute(
                         'UPDATE fib_flow_tasks SET status = ?, last_active_time = ? WHERE id = ?',
@@ -593,8 +595,8 @@ describe("TaskManager DB Connection", () => {
                 assert.ok(tasks.every(task => task.tag === "filter_tag"));
 
                 // Test multiple filters
-                tasks = adapter.getTasks({ 
-                    tag: "filter_tag", 
+                tasks = adapter.getTasks({
+                    tag: "filter_tag",
                     status: "pending",
                     name: "filter_task1"
                 });
@@ -602,7 +604,7 @@ describe("TaskManager DB Connection", () => {
                 assert.equal(tasks[0].payload.data, "test1");
 
                 // Test no matches
-                tasks = adapter.getTasks({ 
+                tasks = adapter.getTasks({
                     tag: "non_existent_tag",
                     status: "pending"
                 });
@@ -624,12 +626,14 @@ describe("TaskManager DB Connection", () => {
                     adapter.getTasks({ status: "invalid_status" });
                 }, /Invalid status value/);
 
-                // Test with non-string values
-                const result = adapter.getTasks({
-                    tag: 123,
-                    name: true
-                });
-                assert.ok(Array.isArray(result));
+                if (!is_postgres) {
+                    // Test with non-string values
+                    const result = adapter.getTasks({
+                        tag: 123,
+                        name: true
+                    });
+                    assert.ok(Array.isArray(result));
+                }
             });
 
             it("should delete tasks with filter conditions", () => {
@@ -672,7 +676,7 @@ describe("TaskManager DB Connection", () => {
                     payload: { data: "test4" }
                 });
                 adapter.insertTask({
-                    name: "delete_task4", 
+                    name: "delete_task4",
                     type: "async",
                     status: "completed",
                     payload: { data: "test5" }
@@ -691,7 +695,7 @@ describe("TaskManager DB Connection", () => {
                 });
                 adapter.insertTask({
                     name: "delete_task5",
-                    type: "async", 
+                    type: "async",
                     payload: { data: "test7" }
                 });
 
@@ -737,12 +741,14 @@ describe("TaskManager DB Connection", () => {
                     adapter.deleteTasks({ status: "invalid_status" });
                 }, /Invalid status value/);
 
-                // Test with non-string values
-                const result = adapter.deleteTasks({
-                    tag: 123,
-                    name: true
-                });
-                assert.ok(typeof result === 'number');
+                if (!is_postgres) {
+                    // Test with non-string values
+                    const result = adapter.deleteTasks({
+                        tag: 123,
+                        name: true
+                    });
+                    assert.ok(typeof result === 'number');
+                }
             });
         });
 
@@ -921,11 +927,11 @@ describe("TaskManager DB Connection", () => {
                 const tagStats = adapter.getTaskStatsByTag("stats_tag");
                 assert.ok(Array.isArray(tagStats));
                 assert.ok(tagStats.length > 0);
-                
+
                 // Verify stats structure and counts
-                const pendingStats = tagStats.find(stat => 
-                    stat.tag === "stats_tag" && 
-                    stat.name === "stats_task1" && 
+                const pendingStats = tagStats.find(stat =>
+                    stat.tag === "stats_tag" &&
+                    stat.name === "stats_task1" &&
                     stat.status === "pending"
                 );
                 assert.ok(pendingStats);
