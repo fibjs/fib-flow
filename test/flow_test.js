@@ -180,4 +180,50 @@ describe("Workflow Tests", () => {
         assert.equal(leafTasks[0].status, 'completed');
         assert.equal(leafTasks[0].result.result, 'leaf_done');
     });
+
+    it("should handle task context", () => {
+        let taskId;
+        const initialContext = Buffer.from([1, 2, 3]);
+        const updatedContext = Buffer.from([4, 5, 6]);
+        let resumeContext;
+
+        taskManager.use('context_test', (task, next) => {
+            if (task.stage === 0) {
+                console.log('Context test task started:', task.id);
+                // Set initial context
+                return next([
+                    { name: 'child_task' }
+                ], initialContext);
+            } else if (task.stage === 1) {
+                console.log('Context test task resumed:', task.id);
+                // Verify context is maintained
+                resumeContext = task.context;
+
+                // Update context
+                return next([
+                    { name: 'child_task' }
+                ], updatedContext);
+            }
+        });
+
+        taskManager.use('child_task', task => {
+            // Verify child task has no inherited context
+            assert.equal(task.context, undefined);
+            return { result: 'done' };
+        });
+
+        taskManager.start();
+
+        taskId = taskManager.async('context_test');
+
+        while (taskManager.getTask(taskId).status !== 'completed') {
+            coroutine.sleep(100);
+        }
+
+        assert.equal(resumeContext.toString('hex'), initialContext.toString('hex'));
+
+        const task = taskManager.getTask(taskId);
+        assert.equal(task.status, 'completed');
+        assert.equal(task.context.toString('hex'), updatedContext.toString('hex'));
+    });
 });

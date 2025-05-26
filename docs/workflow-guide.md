@@ -7,6 +7,7 @@ fib-flow provides comprehensive support for complex task workflows, enabling you
   - [Parent-Child Relationships](#parent-child-relationships)
   - [Task Stage Management](#task-stage-management)
   - [State Management](#state-management)
+  - [Task Context](#task-context)
   - [Task Monitoring](#task-monitoring)
 - [Workflow Examples](#workflow-examples)
   - [Basic Parent-Child Workflow](#basic-parent-child-workflow)
@@ -59,6 +60,45 @@ Configuration inheritance rules:
 - Parent tasks remain `suspended` until all children reach terminal states
 - Cancelling a parent task automatically cancels all pending children
 - Resume operations trigger re-execution of failed children only
+
+### Task Context
+Context only belongs to individual tasks:
+- Parent tasks can store binary data in their context
+- Context is stored as BLOB in database
+- Context is updated via next() options parameter
+- Context does not propagate to child tasks
+
+Example of context usage:
+```javascript
+taskManager.use('parent_task', (task, next) => {
+    if (task.stage == 0) {
+        // Set parent task's context
+        return next([
+            { name: 'child_task1' }
+        ], Buffer.from([0x01, 0x02, 0x03]));
+    } else if (task.stage == 1) {
+        // Access this task's context data
+        const contextData = task.context;  // Returns Buffer
+        
+        // Update this task's context
+        return next([
+            { name: 'child_task2' }
+        ], Buffer.from([0x04, 0x05, 0x06]));
+    }
+});
+
+// Child tasks have their own independent context
+taskManager.use('child_task1', (task) => {
+    // task.context is undefined unless explicitly set
+    return { result: 'child task done' };
+});
+```
+
+Key context behaviors:
+- Context belongs to individual tasks only
+- Each task's context is independent
+- Context updates are atomic with task state changes
+- Context is accessed as Buffer object in task handlers
 
 ### Task Monitoring
 - Track entire workflow progress through task states
