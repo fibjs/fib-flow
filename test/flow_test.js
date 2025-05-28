@@ -226,4 +226,66 @@ describe("Workflow Tests", () => {
         assert.equal(task.status, 'completed');
         assert.equal(task.context.toString('hex'), updatedContext.toString('hex'));
     });
+
+    it("should pass child task results to parent task", () => {
+        let parentTaskId;
+        let childResults;
+        let childResults1;
+
+        taskManager.use('result_parent', (task, next) => {
+            console.log('Result parent task started:', task.id);
+
+            if (task.stage === 0) {
+                // First stage - create child tasks
+                return next([
+                    { name: 'result_child', payload: { value: 1 } },
+                    { name: 'result_child', payload: { value: 2 } },
+                    { name: 'result_child', payload: { value: 3 } }
+                ]);
+            } else if (task.stage === 1) {
+                // 第一轮子任务完成后，验证 task.result 包含所有子任务结果
+                childResults = task.result;
+
+                // 获取原始未解析的 result 字符串以便后续验证格式
+                rawResult = task._raw_result || '';
+
+                // Create second round of child tasks
+                return next([
+                    { name: 'result_child', payload: { value: 4 } },
+                    { name: 'result_child', payload: { value: 5 } }
+                ]);
+            }
+
+            childResults1 = task.result;
+
+            // Final stage - return parent result
+            return { final: 'parent_completed' };
+        });
+
+        taskManager.use('result_child', task => {
+            const value = task.payload.value;
+            console.log(`Result child task executing with value ${value}:`, task.id);
+            return { child_value: value };
+        });
+
+        taskManager.start();
+
+        parentTaskId = taskManager.async('result_parent', { test: 'result_passing' });
+        console.log('Created result parent task:', parentTaskId);
+
+        while (taskManager.getTask(parentTaskId).status !== 'completed') {
+            coroutine.sleep(100);
+        }
+
+        // 验证子任务结果被正确收集
+        assert.equal(childResults.length, 3);
+        assert.equal(childResults[0].result.child_value, 1);
+        assert.equal(childResults[1].result.child_value, 2);
+        assert.equal(childResults[2].result.child_value, 3);
+
+        assert.equal(childResults1.length, 2);
+        assert.equal(childResults1[0].result.child_value, 4);
+        assert.equal(childResults1[1].result.child_value, 5);
+
+    });
 });

@@ -100,6 +100,61 @@ Key context behaviors:
 - Context updates are atomic with task state changes
 - Context is accessed as Buffer object in task handlers
 
+### Child Task Results
+When a parent task creates child tasks, it can access the results from those child tasks when it resumes execution:
+
+- Child task results are automatically collected and made available to the parent
+- Results are accessed via `task.result` in the parent task handler
+- Parent task can use child results to make decisions or aggregate data
+- Each stage's child results are available in the subsequent stage
+
+Example of accessing child task results:
+```javascript
+taskManager.use('parent_task', (task, next) => {
+    if (task.stage === 0) {
+        // Create first round of child tasks
+        return next([
+            { name: 'child_task', payload: { value: 1 } },
+            { name: 'child_task', payload: { value: 2 } },
+            { name: 'child_task', payload: { value: 3 } }
+        ]);
+    } else if (task.stage === 1) {
+        // Access results from first round of child tasks
+        const firstRoundResults = task.result; // Array of child task results
+        console.log(firstRoundResults[0].result); // First child's result
+        
+        // Create second round of child tasks based on first round results
+        return next([
+            { name: 'child_task', payload: { value: 4 } },
+            { name: 'child_task', payload: { value: 5 } }
+        ]);
+    }
+    
+    // Access results from second round of child tasks
+    const secondRoundResults = task.result;
+    
+    // Aggregate or process all results
+    return { 
+        final: 'parent_completed',
+        first_round: task.result.map(child => child.result) 
+    };
+});
+
+// Child task implementation
+taskManager.use('child_task', task => {
+    const value = task.payload.value;
+    return { child_value: value };
+});
+```
+
+Key result behaviors:
+- `task.result` contains an array of objects with each child's result
+- Each child result object includes the child task's properties including `id`, `name`, `status`, and `result`
+- Child results are only available in the parent task's next stage
+- Results are preserved for each stage independently
+- Raw results may be available through `task._raw_result` (if applicable)
+- Child results are cleared after task completion, so capture them if needed for final response
+
 ### Task Monitoring
 - Track entire workflow progress through task states
 - Access child task results and errors
