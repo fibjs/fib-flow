@@ -8,10 +8,46 @@ const Pool = require('fib-pool');
 const config = require('./config.js');
 
 function createDBConn() {
-    return db.open(config.dbConnection);
+    // Check if config.dbConnection is a valid connection string
+    if (typeof config.dbConnection === 'string' && config.dbConnection !== 'memory') {
+        return db.open(config.dbConnection);
+    }
+    // For memory connections, return a mock connection with type property
+    return {
+        close: () => {},
+        execute: () => {},
+        type: 'memory'
+    };
 }
 
 const is_postgres = config.dbConnection.startsWith("psql://");
+
+// Helper function to directly modify task properties for testing
+// This works differently for memory vs SQL adapters
+function directUpdateTaskProperty(adapter, taskId, property, value) {
+    if (adapter.tasks) {
+        // Memory adapter - need to update indexes when changing certain properties
+        const task = adapter.tasks.get(taskId);
+        if (task) {
+            // Store old task state for index update
+            const oldTask = { ...task };
+            
+            // Update the property
+            task[property] = value;
+            
+            // Update indexes if we changed a property that affects indexing
+            if (['status', 'name', 'tag', 'parent_id', 'next_run_time', 'worker_id'].includes(property)) {
+                adapter._updateIndexes(oldTask, task);
+            }
+        }
+    } else {
+        // SQL adapter - use SQL update
+        adapter.pool(conn => {
+            const sql = `UPDATE fib_flow_tasks SET ${property} = ? WHERE id = ?`;
+            conn.execute(sql, value, taskId);
+        });
+    }
+}
 
 describe("TaskManager DB Connection", () => {
     describe("TaskManager DB Connection Options", () => {
@@ -102,6 +138,12 @@ describe("TaskManager DB Connection", () => {
                         type: "invalid_type"
                     });
                 }, /type.*either/);
+
+                // Create a valid task first, then try invalid status update
+                const taskId = adapter.insertTask({
+                    name: "test_task",
+                    type: "async"
+                });
 
                 assert.throws(() => {
                     adapter.updateTaskStatus(1, "invalid_status");
@@ -214,23 +256,18 @@ describe("TaskManager DB Connection", () => {
                 // Claim the task
                 adapter.claimTask(["active_time_test"], "test-worker");
 
-                // Set last_active_time to a past time
+                // Set last_active_time to a past time using helper function
+                const task = adapter.getTask(taskId);
                 const now = Math.floor(Date.now() / 1000);
-                adapter.pool(conn => {
-                    conn.execute(
-                        'UPDATE fib_flow_tasks SET last_active_time = ? WHERE id = ?',
-                        now - 300, // 5 minutes ago
-                        taskId
-                    );
-                });
+                directUpdateTaskProperty(adapter, taskId, 'last_active_time', now - 300); // 5 minutes ago
 
                 // First call to handleTimeoutTasks - should mark task as timeout
                 adapter.handleTimeoutTasks(1000);
 
                 // Verify task is marked as timeout first
-                let task = adapter.getTask(taskId);
-                assert.equal(task.status, "timeout");
-                assert.ok(task.error.includes("Task heartbeat lost"));
+                let updatedTask = adapter.getTask(taskId);
+                assert.equal(updatedTask.status, "timeout");
+                assert.ok(updatedTask.error.includes("Task heartbeat lost"));
 
                 coroutine.sleep(1000); // Wait for a second
 
@@ -238,9 +275,9 @@ describe("TaskManager DB Connection", () => {
                 adapter.handleTimeoutTasks(1000);
 
                 // Now verify task becomes pending with incremented retry count
-                task = adapter.getTask(taskId);
-                assert.equal(task.status, "pending");
-                assert.equal(task.retry_count, 1);
+                updatedTask = adapter.getTask(taskId);
+                assert.equal(updatedTask.status, "pending");
+                assert.equal(updatedTask.retry_count, 1);
             });
 
             it("should handle task timeout scenarios", () => {
@@ -256,13 +293,7 @@ describe("TaskManager DB Connection", () => {
 
                 // Claim the task and set start_time to simulate long-running task
                 adapter.claimTask(["total_timeout_test"], "test-worker");
-                adapter.pool(conn => {
-                    conn.execute(
-                        'UPDATE fib_flow_tasks SET start_time = ? WHERE id = ?',
-                        now - 120, // 2 minutes ago, exceeding 60s timeout
-                        totalTimeoutTaskId
-                    );
-                });
+                directUpdateTaskProperty(adapter, totalTimeoutTaskId, 'start_time', now - 120); // 2 minutes ago
 
                 // 2. Test heartbeat timeout (inactive task)
                 const heartbeatTimeoutTaskId = adapter.insertTask({
@@ -273,13 +304,7 @@ describe("TaskManager DB Connection", () => {
                 });
 
                 adapter.claimTask(["heartbeat_timeout_test"], "test-worker");
-                adapter.pool(conn => {
-                    conn.execute(
-                        'UPDATE fib_flow_tasks SET last_active_time = ? WHERE id = ?',
-                        now - 300, // 5 minutes ago, exceeding 5 * active_update_interval
-                        heartbeatTimeoutTaskId
-                    );
-                });
+                directUpdateTaskProperty(adapter, heartbeatTimeoutTaskId, 'last_active_time', now - 300); // 5 minutes ago
 
                 // 3. Test retry mechanism for async task
                 const retryTaskId = adapter.insertTask({
@@ -290,13 +315,7 @@ describe("TaskManager DB Connection", () => {
                 });
 
                 adapter.claimTask(["retry_test"], "test-worker");
-                adapter.pool(conn => {
-                    conn.execute(
-                        'UPDATE fib_flow_tasks SET last_active_time = ? WHERE id = ?',
-                        now - 300,
-                        retryTaskId
-                    );
-                });
+                directUpdateTaskProperty(adapter, retryTaskId, 'last_active_time', now - 300);
 
                 // 4. Test cron task final state
                 const cronTaskId = adapter.insertTask({
@@ -308,13 +327,8 @@ describe("TaskManager DB Connection", () => {
                 });
 
                 adapter.claimTask(["cron_timeout_test"], "test-worker");
-                adapter.pool(conn => {
-                    conn.execute(
-                        'UPDATE fib_flow_tasks SET last_active_time = ?, retry_count = 1 WHERE id = ?',
-                        now - 300,
-                        cronTaskId
-                    );
-                });
+                directUpdateTaskProperty(adapter, cronTaskId, 'last_active_time', now - 300);
+                directUpdateTaskProperty(adapter, cronTaskId, 'retry_count', 1);
 
                 // First call to handleTimeoutTasks - should mark tasks as timeout
                 adapter.handleTimeoutTasks(1000); // 1 second active update interval
@@ -355,14 +369,9 @@ describe("TaskManager DB Connection", () => {
                 assert.ok(task.next_run_time > now);
 
                 // Set retry count to max to test retry exhaustion
-                adapter.pool(conn => {
-                    conn.execute(
-                        'UPDATE fib_flow_tasks SET status = ?, last_active_time = ?, retry_count = 2 WHERE id = ?',
-                        'timeout',
-                        now - 300,
-                        retryTaskId
-                    );
-                });
+                directUpdateTaskProperty(adapter, retryTaskId, 'status', 'timeout');
+                directUpdateTaskProperty(adapter, retryTaskId, 'last_active_time', Math.floor(Date.now() / 1000) - 300);
+                directUpdateTaskProperty(adapter, retryTaskId, 'retry_count', 2);
 
                 // Wait for retry_interval to pass
                 coroutine.sleep(1200);
@@ -393,22 +402,16 @@ describe("TaskManager DB Connection", () => {
                     type: "async"
                 });
 
-                // Mark tasks as completed/failed and set last_active_time
-                adapter.pool(conn => {
-                    conn.execute(
-                        'UPDATE fib_flow_tasks SET status = ?, last_active_time = ? WHERE id = ?',
-                        'completed',
-                        now - 3600, // 1 hour ago
-                        completedTaskId
-                    );
+                // Mark tasks as completed/failed and set last_active_time using helper functions
+                // First claim and complete the tasks properly
+                adapter.claimTask(["completed_task"], "test-worker");
+                adapter.updateTaskStatus(completedTaskId, 'completed');
+                directUpdateTaskProperty(adapter, completedTaskId, 'last_active_time', now - 3600); // 1 hour ago
 
-                    conn.execute(
-                        'UPDATE fib_flow_tasks SET status = ?, last_active_time = ? WHERE id = ?',
-                        'permanently_failed',
-                        now - 3600,
-                        failedTaskId
-                    );
-                });
+                adapter.claimTask(["failed_task"], "test-worker");
+                adapter.updateTaskStatus(failedTaskId, 'failed');
+                adapter.updateTaskStatus(failedTaskId, 'permanently_failed');
+                directUpdateTaskProperty(adapter, failedTaskId, 'last_active_time', now - 3600);
 
                 // Call handleTimeoutTasks with 30 minute expiry
                 adapter.handleTimeoutTasks(1000, 1800); // 30 minutes
@@ -423,20 +426,16 @@ describe("TaskManager DB Connection", () => {
                     type: "async"
                 });
 
-                adapter.pool(conn => {
-                    conn.execute(
-                        'UPDATE fib_flow_tasks SET status = ?, last_active_time = ? WHERE id = ?',
-                        'completed',
-                        now - 900, // 15 minutes ago
-                        activeCompletedId
-                    );
-                });
+                // Update task status and time using proper methods
+                adapter.claimTask(["active_completed"], "test-worker");
+                adapter.updateTaskStatus(activeCompletedId, 'completed');
+                directUpdateTaskProperty(adapter, activeCompletedId, 'last_active_time', now - 900); // 15 minutes ago
 
                 // Verify recent tasks not deleted
                 adapter.handleTimeoutTasks(1000, 1800);
-                const activeTask = adapter.getTask(activeCompletedId);
-                assert.ok(activeTask);
-                assert.equal(activeTask.status, 'completed');
+                const retrievedTask = adapter.getTask(activeCompletedId);
+                assert.ok(retrievedTask);
+                assert.equal(retrievedTask.status, 'completed');
             });
         });
 
