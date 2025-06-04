@@ -52,7 +52,7 @@ When using object form registration, the following options are available:
 |--------|------|---------|-------------|
 | handler | Function | Required | Task implementation function |
 | timeout | Number | 60 | Task execution timeout in seconds |
-| max_retries | Number | 3 | Maximum retry attempts |
+| max_retries | Number | 3 | Maximum total attempts (including initial attempt) |
 | retry_interval | Number | 0 | Delay between retries in seconds |
 | priority | Number | - | Default priority level for tasks |
 

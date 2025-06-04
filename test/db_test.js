@@ -250,7 +250,7 @@ describe("TaskManager DB Connection", () => {
                     name: "active_time_test",
                     type: "async",
                     timeout: 60,
-                    max_retries: 1
+                    max_retries: 2
                 });
 
                 // Claim the task

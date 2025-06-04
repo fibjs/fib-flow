@@ -90,7 +90,7 @@ describe('Cron Tests', () => {
 
         const taskId = taskManager.cron('test', '* * * * * *');
         
-        while(attempts < taskManager.options.max_retries + 1) {
+        while(attempts < taskManager.options.max_retries) {
             coroutine.sleep(100);
         }
 
@@ -101,7 +101,7 @@ describe('Cron Tests', () => {
         const task = taskManager.getTask(taskId);
         assert.equal(task.retry_count > 0, true);
         assert.equal(task.status, 'paused');
-        assert.equal(attempts, taskManager.options.max_retries + 1); 
+        assert.equal(attempts, taskManager.options.max_retries); 
     });
 
     it('should respect task priority in cron tasks', () => {
@@ -135,7 +135,7 @@ describe('Cron Tests', () => {
         
         const taskId = taskManager.cron('test', '* * * * * *', {}, { 
             timeout: 1,
-            max_retries: 1,  
+            max_retries: 2,  
             retry_interval: 1 
         });
 
@@ -183,7 +183,7 @@ describe('Cron Tests', () => {
         
         const taskId = taskManager.cron('test', '* * * * * *', {}, { 
             timeout: 1,
-            max_retries: 1,
+            max_retries: 2,
             retry_interval: 1
         });
 

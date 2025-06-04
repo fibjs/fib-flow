@@ -132,7 +132,7 @@ When registering a task handler using the object form, you can specify the follo
 |--------|------|---------|-------------|
 | handler | Function | Required | The async function that processes the task |
 | timeout | Number | 60 | Task execution timeout in seconds |
-| max_retries | Number | 3 | Maximum number of retry attempts |
+| max_retries | Number | 3 | Maximum total attempts for tasks (including initial attempt) |
 | retry_interval | Number | 0 | Delay between retries in seconds |
 | priority | Number | - | Default priority for all tasks of this type |
 | max_concurrent_tasks | Number | - | Maximum number of concurrent tasks of this type |
@@ -152,7 +152,7 @@ Task execution can be configured through three levels:
 ```javascript
 const taskManager = new TaskManager({
     poll_interval: 1000,          // Poll interval in milliseconds
-    max_retries: 3,              // Maximum retry attempts
+    max_retries: 3,              // Maximum total attempts (including initial attempt)
     retry_interval: 0,           // No delay between retries
     timeout: 60,                // Default task timeout in seconds
     max_concurrent_tasks: 10,   // Maximum concurrent tasks
@@ -166,7 +166,7 @@ const taskManager = new TaskManager({
 taskManager.use('processImage', {
     handler: async (task) => { /* ... */ },
     timeout: 120,           // 2 minutes timeout
-    max_retries: 2,        // Maximum 2 retries
+    max_retries: 2,        // Maximum 2 total attempts
     retry_interval: 30,    // 30 seconds retry interval
     priority: 5,           // Higher priority tasks
     max_concurrent_tasks: 5 // Max 5 concurrent tasks of this type

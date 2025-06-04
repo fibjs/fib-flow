@@ -68,7 +68,7 @@ describe('Async Tasks', () => {
         const task = taskManager.getTask(taskId);
         assert.equal(task.status, 'permanently_failed');
         assert.equal(task.error.split('\n')[0], 'Error: Task failed');
-        assert.equal(attempts, 3);
+        assert.equal(attempts, 2);
     });
 
     it('should handle task timeout through periodic check', () => {

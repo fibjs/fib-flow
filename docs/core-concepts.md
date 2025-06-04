@@ -169,7 +169,7 @@ taskManager.use('longTask', async (task) => {
 ```javascript
 // Configure retry behavior
 taskManager.async('retryableTask', data, {
-    max_retries: 3,        // Retry up to 3 times
+    max_retries: 3,        // Maximum 3 total attempts (initial + 2 retries)
     retry_interval: 300
 });
 ```

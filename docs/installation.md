@@ -50,7 +50,7 @@ Configuration Options:
   - MySQL: `mysql://user:pass@host:3306/database`
   - PostgreSQL: `psql://user:pass@host:5432/database`
 - `poll_interval`: How often to check for new tasks (in milliseconds)
-- `max_retries`: Number of retry attempts for failed tasks
+- `max_retries`: Number of total attempts for failed tasks (including initial attempt)
 - `retry_interval`: Time to wait before retrying (in seconds)
 - `timeout`: Default task execution timeout (in seconds)
 - `max_concurrent_tasks`: Maximum number of tasks running simultaneously

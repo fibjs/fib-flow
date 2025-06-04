@@ -96,7 +96,7 @@ taskManager.cron('monthlyCleanup', '0 0 1 * *', {
     older_than: '30d',
     target_dir: '/tmp'
 }, {
-    max_retries: 5,
+    max_retries: 5,        // Maximum 5 total attempts
     retry_interval: 600
 });
 ```
