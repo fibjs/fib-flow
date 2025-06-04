@@ -106,20 +106,20 @@ describe("Workflow Tests", () => {
         parentTaskId = taskManager.async('failing_parent', { data: 'parent_data' });
         console.log('Created failing parent task:', parentTaskId);
 
-        // 等待父任务完成，而不是等待它失败，因为根据新实现，子任务失败后父任务会被唤醒
+        // Wait for parent task to complete, not fail, because according to new implementation, parent task will be resumed after child task fails
         while (taskManager.getTask(parentTaskId).status !== 'completed') {
             coroutine.sleep(100);
         }
 
         const parentTask = taskManager.getTask(parentTaskId);
-        // 父任务应该成功完成
+        // Parent task should complete successfully
         assert.equal(parentTask.status, 'completed');
-        // 父任务应该返回预期结果
+        // Parent task should return expected result
         assert.equal(parentTask.result.result, 'parent_done');
 
         const children = taskManager.getChildTasks(parentTaskId);
         assert.equal(children.length, 1);
-        // 子任务仍然应该是永久失败状态
+        // Child task should still be in permanently failed status
         assert.equal(children[0].status, 'permanently_failed');
         assert.equal(children[0].error.split('\n')[0], 'Error: Intentional failure');
     });
@@ -212,9 +212,9 @@ describe("Workflow Tests", () => {
         });
 
         taskManager.use('child_task', task => {
-            // Verify child task has no inherited context
-            assert.equal(task.context, undefined);
-            return { result: 'done' };
+            // Child tasks should not have inherited context (verified in test body, not asserted here)
+            const contextIsEmpty = task.context == null; // Check for null or undefined
+            return { result: 'done', contextIsEmpty };
         });
 
         taskManager.start();
@@ -230,6 +230,13 @@ describe("Workflow Tests", () => {
         const task = taskManager.getTask(taskId);
         assert.equal(task.status, 'completed');
         assert.equal(task.context.toString('hex'), updatedContext.toString('hex'));
+        
+        // Verify if child tasks inherited context
+        const childTasks = taskManager.getChildTasks(taskId);
+        childTasks.forEach(childTask => {
+            // Child tasks don't inherit context, so contextIsEmpty is true (indicating context is empty)
+            assert.equal(childTask.result.contextIsEmpty, true, 'Child tasks should not inherit context');
+        });
     });
 
     it("should pass child task results to parent task", () => {
@@ -248,10 +255,10 @@ describe("Workflow Tests", () => {
                     { name: 'result_child', payload: { value: 3 } }
                 ]);
             } else if (task.stage === 1) {
-                // 第一轮子任务完成后，验证 task.result 包含所有子任务结果
+                // After first round of child tasks complete, verify task.result contains all child task results
                 childResults = task.result;
 
-                // 获取原始未解析的 result 字符串以便后续验证格式
+                // Get raw unparsed result string for subsequent format verification
                 rawResult = task._raw_result || '';
 
                 // Create second round of child tasks
@@ -282,7 +289,7 @@ describe("Workflow Tests", () => {
             coroutine.sleep(100);
         }
 
-        // 验证子任务结果被正确收集
+        // Verify child task results are properly collected
         assert.equal(childResults.length, 3);
         assert.equal(childResults[0].result.child_value, 1);
         assert.equal(childResults[1].result.child_value, 2);
@@ -303,18 +310,18 @@ describe("Workflow Tests", () => {
             console.log('Mixed parent task started:', task.id);
 
             if (task.stage === 0) {
-                // 创建三个子任务，其中一个会失败
+                // Create three child tasks, one of which will fail
                 return next([
                     { name: 'success_child', payload: { value: 1 } },
                     { name: 'failing_child', payload: { value: 2 } },
                     { name: 'success_child', payload: { value: 3 } }
                 ]);
             } else if (task.stage === 1) {
-                // 保存中间结果以便后续验证
+                // Save intermediate results for subsequent verification
                 childTasksInfo = task.result;
                 console.log('Parent received child results:', JSON.stringify(childTasksInfo));
                 
-                // 检测哪个子任务失败，并记录其ID
+                // Detect which child task failed and record its ID
                 for (let i = 0; i < childTasksInfo.length; i++) {
                     if (childTasksInfo[i].error) {
                         failedChildId = childTasksInfo[i].task_id;
@@ -323,7 +330,7 @@ describe("Workflow Tests", () => {
                     }
                 }
                 
-                // 基于子任务结果执行不同的处理逻辑
+                // Execute different processing logic based on child task results
                 if (failedChildId) {
                     return { status: 'partial_success', failedTask: failedChildId };
                 } else {
@@ -355,11 +362,11 @@ describe("Workflow Tests", () => {
         const parentTask = taskManager.getTask(parentTaskId);
         assert.equal(parentTask.status, 'completed');
         
-        // 验证父任务能根据子任务失败情况返回正确的结果
+        // Verify parent task can return correct result based on child task failure situation
         assert.equal(parentTask.result.status, 'partial_success');
         assert.ok(parentTask.result.failedTask > 0);
         
-        // 验证失败的子任务ID被正确记录
+        // Verify failed child task ID is correctly recorded
         const children = taskManager.getChildTasks(parentTaskId);
         let foundFailedChild = false;
         
@@ -371,12 +378,12 @@ describe("Workflow Tests", () => {
             }
         });
         
-        assert.ok(foundFailedChild, '应该找到一个失败的子任务');
+        assert.ok(foundFailedChild, 'Should find one failed child task');
         
-        // 验证中间结果中包含了子任务的成功和失败信息
+        // Verify intermediate results contain success and failure information of child tasks
         assert.equal(childTasksInfo.length, 3);
         
-        // 成功的子任务应该包含正确的结果
+        // Successful child tasks should contain correct results
         let successCount = 0;
         let failCount = 0;
         
@@ -391,8 +398,8 @@ describe("Workflow Tests", () => {
             }
         });
         
-        assert.equal(successCount, 2, '应该有两个成功的子任务');
-        assert.equal(failCount, 1, '应该有一个失败的子任务');
+        assert.equal(successCount, 2, 'Should have two successful child tasks');
+        assert.equal(failCount, 1, 'Should have one failed child task');
     });
 
     it("should handle cron task with async subtasks", () => {
@@ -431,19 +438,19 @@ describe("Workflow Tests", () => {
 
         taskManager.start();
 
-        // 创建一个每秒执行一次的cron任务
+        // Create a cron task that executes every second
         const cronTaskId = taskManager.cron('cron_parent', '* * * * * *', { type: 'test_cron' });
         console.log('Created cron parent task:', cronTaskId);
 
-        // 等待足够长的时间，确保cron任务执行了至少两次
+        // Wait long enough to ensure cron task executes at least twice
         coroutine.sleep(2500);
 
-        // 验证cron任务已经执行了至少两次
-        assert.ok(cronExecutionCount >= 2, '定时任务应该执行了至少2次');
-        // 验证子任务已经执行了
-        assert.ok(childTaskExecutions >= 4, '子任务应该执行了至少4次（每次cron执行2个子任务）');
+        // Verify cron task has executed at least twice
+        assert.ok(cronExecutionCount >= 2, 'Scheduled task should execute at least 2 times');
+        // Verify child tasks have been executed
+        assert.ok(childTaskExecutions >= 4, 'Child tasks should execute at least 4 times (2 child tasks per cron execution)');
 
-        // 在停止taskManager前获取所有需要验证的任务信息
+        // Get all task information needed for verification before stopping taskManager
         const cronTask = taskManager.getTask(cronTaskId);
         let lastParentTask = null;
         let childTasks = [];
@@ -453,38 +460,38 @@ describe("Workflow Tests", () => {
             childTasks = taskManager.getChildTasks(lastParentTaskId);
         }
         
-        // 获取完所有任务信息后，再停止任务管理器
+        // After getting all task information, stop the task manager
         taskManager.stop();
 
-        // 验证最后一次cron任务执行的状态
+        // Verify the status of the last cron task execution
         assert.equal(cronTask.type, 'cron');
         assert.equal(typeof cronTask.next_run_time, 'number');
 
-        // 验证最后一次执行的父任务状态
+        // Verify the status of the last executed parent task
         if (lastParentTaskId && lastParentTask) {
-            // 由于这是cron任务创建的执行实例，它的状态应该是 'pending' 而不是 'completed'
+            // Since this is an execution instance created by cron task, its status should be 'pending' instead of 'completed'
             assert.equal(lastParentTask.status, 'pending');
-            // 验证执行结果仍然可以通过 result 字段获取
+            // Verify execution results can still be obtained through the result field
             assert.equal(lastParentTask.result.result, 'cron_parent_completed');
             assert.equal(lastParentTask.result.childCount, 2);
 
-            // 验证子任务是否都已完成
-            // 注意：每次cron执行会创建2个子任务，所以子任务总数是2的倍数
-            assert.equal(childTasks.length % 2, 0, '子任务数量应该是2的倍数');
-            assert.ok(childTasks.length >= 2, '应该至少有一组子任务');
+            // Verify if all child tasks are completed
+            // Note: Each cron execution creates 2 child tasks, so total child tasks should be multiples of 2
+            assert.equal(childTasks.length % 2, 0, 'Number of child tasks should be multiples of 2');
+            assert.ok(childTasks.length >= 2, 'Should have at least one group of child tasks');
             
-            // 验证所有子任务都已完成
+            // Verify all child tasks are completed
             childTasks.forEach(childTask => {
-                assert.equal(childTask.status, 'completed', '所有子任务都应该已完成');
+                assert.equal(childTask.status, 'completed', 'All child tasks should be completed');
                 assert.equal(childTask.result.result, 'child_processed');
             });
             
-            // 找出最后创建的一对子任务
-            // cron任务最后一次执行时会传递最大的cronExecutionCount值
+            // Find the last created pair of child tasks
+            // The last cron execution will pass the maximum cronExecutionCount value
             let lastPairTasks = [];
             let maxValue = 0;
             
-            // 遍历所有子任务，找出执行计数最大的一组
+            // Traverse all child tasks to find the group with maximum execution count
             childTasks.forEach(task => {
                 const value = task.result.value;
                 const baseValue = value > 100 ? value - 100 : value;
@@ -493,20 +500,20 @@ describe("Workflow Tests", () => {
                 }
             });
             
-            // 找出与最大执行计数相关的那一对任务
+            // Find the pair of tasks related to maximum execution count
             lastPairTasks = childTasks.filter(task => {
                 const value = task.result.value;
                 return value === maxValue || value === maxValue + 100;
             });
             
-            // 验证找到了一对任务
-            assert.equal(lastPairTasks.length, 2, '应该找到最后执行创建的一对子任务');
+            // Verify a pair of tasks was found
+            assert.equal(lastPairTasks.length, 2, 'Should find the last created pair of child tasks');
             
-            // 按值排序这对任务
+            // Sort this pair of tasks by value
             lastPairTasks.sort((a, b) => a.result.value - b.result.value);
             
-            // 验证它们的值是正确的
-            // 不要依赖可能变化的cronExecutionCount，而是使用从子任务中找到的实际最大值
+            // Verify their values are correct
+            // Don't rely on potentially changing cronExecutionCount, use the actual maximum value found from child tasks
             assert.equal(lastPairTasks[0].result.value, maxValue);
             assert.equal(lastPairTasks[1].result.value, maxValue + 100);
         }
@@ -542,7 +549,7 @@ describe("Workflow Tests", () => {
             const childResults = task.result;
             let failedTask = null;
             
-            // 检查子任务结果，找出失败的任务
+            // Check child task results and find the failed task
             for (let i = 0; i < childResults.length; i++) {
                 if (childResults[i].error) {
                     failedTask = childResults[i].task_id;
@@ -551,7 +558,7 @@ describe("Workflow Tests", () => {
                 }
             }
 
-            // 返回包含处理结果的对象
+            // Return object containing processing results
             return { 
                 result: 'cron_parent_completed', 
                 childCount: childResults.length,
@@ -574,28 +581,28 @@ describe("Workflow Tests", () => {
 
         taskManager.start();
 
-        // 创建一个每秒执行一次的cron任务
+        // Create a cron task that executes every second
         const cronTaskId = taskManager.cron('cron_parent_with_failure', '* * * * * *', { type: 'test_cron_failures' });
         console.log('Created cron parent task with failing children:', cronTaskId);
 
-        // 等待足够长的时间，确保cron任务执行了至少两次
-        // 通过循环等待并检查执行次数，最多等待5秒
+        // Wait long enough to ensure cron task executes at least twice
+        // Wait by looping and checking execution count, maximum wait 5 seconds
         const startTime = Date.now();
-        const timeoutMs = 5000; // 5秒超时
+        const timeoutMs = 5000; // 5 second timeout
         
         while (cronExecutionCount < 2) {
             coroutine.sleep(10);
         }
 
-        console.log(`测试结束 - cron最终执行次数: ${cronExecutionCount}`);
+        console.log(`Test ended - cron final execution count: ${cronExecutionCount}`);
         
-        // 放宽验证条件，如果执行次数至少为1，也通过测试
-        assert.ok(cronExecutionCount >= 1, '定时任务应该至少执行1次');
-        // 验证子任务已经执行了
-        assert.ok(childTaskExecutions >= 1, '正常子任务应该至少执行1次');
-        assert.ok(failingChildExecutions >= 1, '失败的子任务应该至少执行1次');
+        // Relax validation conditions, pass the test if execution count is at least 1
+        assert.ok(cronExecutionCount >= 1, 'Scheduled task should execute at least 1 time');
+        // Verify child tasks have been executed
+        assert.ok(childTaskExecutions >= 1, 'Normal child tasks should execute at least 1 time');
+        assert.ok(failingChildExecutions >= 1, 'Failing child tasks should execute at least 1 time');
 
-        // 在停止taskManager前获取所有需要验证的任务信息
+        // Get all task information needed for verification before stopping taskManager
         const cronTask = taskManager.getTask(cronTaskId);
         let lastParentTask = null;
         let childTasks = [];
@@ -605,29 +612,29 @@ describe("Workflow Tests", () => {
             childTasks = taskManager.getChildTasks(lastParentTaskId);
         }
         
-        // 获取完所有任务信息后，再停止任务管理器
+        // After getting all task information, stop the task manager
         taskManager.stop();
 
-        // 验证最后一次cron任务执行的状态
+        // Verify the status of the last cron task execution
         assert.equal(cronTask.type, 'cron');
         assert.equal(typeof cronTask.next_run_time, 'number');
 
-        // 验证最后一次执行的父任务状态
+        // Verify the status of the last executed parent task
         if (lastParentTaskId && lastParentTask) {
-            // cron任务创建的执行实例的状态应该是 'pending'
+            // The execution instance created by cron task should have status 'pending'
             assert.equal(lastParentTask.status, 'pending');
             
-            // 验证执行结果包含了子任务失败的信息
+            // Verify execution results contain child task failure information
             assert.equal(lastParentTask.result.result, 'cron_parent_completed');
             assert.equal(lastParentTask.result.childCount, 2);
-            assert.equal(lastParentTask.result.hasFailures, true, '应该检测到子任务失败');
-            assert.ok(lastParentTask.result.failedTaskId > 0, '应该记录失败的子任务ID');
+            assert.equal(lastParentTask.result.hasFailures, true, 'Should detect child task failures');
+            assert.ok(lastParentTask.result.failedTaskId > 0, 'Should record failed child task ID');
 
-            // 验证子任务数量是2的倍数
-            assert.equal(childTasks.length % 2, 0, '子任务数量应该是2的倍数');
-            assert.ok(childTasks.length >= 2, '应该至少有一组子任务');
+            // Verify child task count is a multiple of 2
+            assert.equal(childTasks.length % 2, 0, 'Number of child tasks should be a multiple of 2');
+            assert.ok(childTasks.length >= 2, 'Should have at least one group of child tasks');
             
-            // 分别统计成功和失败的子任务数量
+            // Count successful and failed child tasks separately
             let successCount = 0;
             let failCount = 0;
             let latestFailedChild = null;
@@ -638,22 +645,22 @@ describe("Workflow Tests", () => {
                     assert.equal(childTask.result.result, 'child_processed');
                 } else if (childTask.status === 'permanently_failed') {
                     failCount++;
-                    // 记录最新的失败子任务（即与lastParentTaskId对应的那个）
+                    // Record the latest failed child task (the one corresponding to lastParentTaskId)
                     if (childTask.id === failedChildTaskId) {
                         latestFailedChild = childTask;
                     }
                 }
             });
             
-            // 验证有成功的子任务和失败的子任务
-            assert.ok(successCount >= childTasks.length / 2, '至少一半的子任务应该成功');
-            assert.ok(failCount >= childTasks.length / 2, '至少一半的子任务应该失败');
+            // Verify there are both successful and failed child tasks
+            assert.ok(successCount >= childTasks.length / 2, 'At least half of child tasks should succeed');
+            assert.ok(failCount >= childTasks.length / 2, 'At least half of child tasks should fail');
             
-            // 验证最后一次执行创建的失败子任务
+            // Verify the failed child task from the last execution
             if (latestFailedChild) {
                 assert.equal(latestFailedChild.status, 'permanently_failed');
                 assert.ok(latestFailedChild.error.includes('Expected child failure in cron task'), 
-                    '错误消息应该包含预期的文本');
+                    'Error message should contain expected text');
             }
         }
     });
@@ -701,9 +708,9 @@ describe("Workflow Tests", () => {
 
         taskManager.use('context_child', task => {
             console.log('Context child task executing:', task.id);
-            // Verify child task has no inherited context
-            assert.equal(task.context, undefined);
-            return { result: 'child_done' };
+            // Child tasks should not have inherited context (verified in test body, not asserted here)
+            const contextIsEmpty = task.context == null; // Check for null or undefined
+            return { result: 'child_done', contextIsEmpty };
         });
 
         taskManager.start();
@@ -744,6 +751,8 @@ describe("Workflow Tests", () => {
         childTasks.forEach(childTask => {
             assert.equal(childTask.status, 'completed', 'All child tasks should be completed');
             assert.equal(childTask.result.result, 'child_done', 'All child tasks should have correct result');
+            // Verify if child tasks inherited context
+            assert.equal(childTask.result.contextIsEmpty, true, 'Child tasks should not inherit context');
         });
         
         console.log('Context retry test completed successfully');
@@ -910,5 +919,98 @@ describe("Workflow Tests", () => {
         assert.equal(childTasks[0].result.result, 'child_after_timeout', 'Child task should have correct result');
         
         console.log('Timeout context retry test completed successfully');
+    });
+
+    it("should pass complete error stack from child task to parent task", () => {
+        let parentTaskId;
+        let errorStack;
+
+        // Define a function to generate meaningful stack information
+        function generateErrorWithStack() {
+            try {
+                // Intentionally nest several function calls to generate more stack information
+                function level3() {
+                    throw new Error("Complete stack error for testing");
+                }
+                function level2() {
+                    level3();
+                }
+                function level1() {
+                    level2();
+                }
+                level1();
+            } catch (e) {
+                return e;
+            }
+        }
+
+        taskManager.use('stack_parent', (task, next) => {
+            console.log('Stack test parent task started:', task.id);
+
+            if (task.stage === 0) {
+                return next([
+                    { name: 'stack_child' }
+                ]);
+            }
+
+            // Get child task results, including error information
+            const childTasks = task.result;
+            
+            // Save complete error stack information for subsequent verification
+            errorStack = childTasks[0].error;
+            console.log("Received complete error stack:", errorStack);
+            
+            return { result: 'parent_completed', errorStackLines: errorStack.split('\n').length };
+        });
+
+        taskManager.use('stack_child', task => {
+            console.log('Stack child task executing:', task.id);
+            // Throw an error with complete stack information
+            throw generateErrorWithStack();
+        });
+
+        taskManager.start();
+
+        parentTaskId = taskManager.async('stack_parent', { test: 'stack_test' });
+        console.log('Created stack test parent task:', parentTaskId);
+
+        while (taskManager.getTask(parentTaskId).status !== 'completed') {
+            coroutine.sleep(100);
+        }
+
+        const parentTask = taskManager.getTask(parentTaskId);
+        assert.equal(parentTask.status, 'completed', "Parent task should complete successfully");
+        
+        // Verify error stack information
+        const childTasks = taskManager.getChildTasks(parentTaskId);
+        assert.equal(childTasks.length, 1, "Should have one child task");
+        assert.equal(childTasks[0].status, 'permanently_failed', "Child task should have failed");
+        
+        // Verify error message contains complete stack information
+        assert.ok(childTasks[0].error.includes("Complete stack error for testing"), "Error should contain the error message");
+        
+        // Verify stack information has multiple lines (not just the first line)
+        const errorLines = childTasks[0].error.split('\n');
+        assert.ok(errorLines.length > 1, "Error should have multiple lines (complete stack trace)");
+        
+        // Verify first line contains error message
+        assert.equal(errorLines[0], "Error: Complete stack error for testing");
+        
+        // Verify subsequent lines contain stack information (at least include our custom function names)
+        let hasStackInfo = false;
+        for (let i = 1; i < errorLines.length; i++) {
+            if (errorLines[i].includes("level3") || 
+                errorLines[i].includes("level2") || 
+                errorLines[i].includes("level1")) {
+                hasStackInfo = true;
+                break;
+            }
+        }
+        assert.ok(hasStackInfo, "Error stack should include function names from the call stack");
+
+        // Verify error stack saved in parent task matches the child's error
+        assert.equal(errorStack, childTasks[0].error, "Error stack in parent should match child's error");
+        
+        console.log("Complete error stack passing test successful");
     });
 });
