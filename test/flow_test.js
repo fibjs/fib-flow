@@ -657,4 +657,258 @@ describe("Workflow Tests", () => {
             }
         }
     });
+
+    it("should reset context when task with context fails and gets retried", () => {
+        let taskId;
+        let firstStage0Context;
+        let stage1Context;
+        let retryStage0Context;
+        const testContext = Buffer.from([1, 2, 3, 4, 5]);
+        let executionCount = 0;
+
+        taskManager.use('context_retry_test', (task, next) => {
+            console.log(`Context retry test - stage: ${task.stage}, execution: ${++executionCount}:`, task.id);
+            
+            if (task.stage === 0) {
+                if (executionCount === 1) {
+                    // First execution stage 0: set context and create child tasks
+                    firstStage0Context = task.context;
+                    console.log('First execution stage 0 - setting context and creating child tasks');
+                    return next([
+                        { name: 'context_child' }
+                    ], testContext);
+                } else {
+                    // Retry execution stage 0: verify context is reset
+                    retryStage0Context = task.context;
+                    console.log('Retry execution stage 0 - checking context reset');
+                    return next([
+                        { name: 'context_child' }
+                    ], testContext);
+                }
+            } else if (task.stage === 1) {
+                if (executionCount === 2) {
+                    // First time stage 1: context should be available, then fail to trigger retry
+                    stage1Context = task.context;
+                    console.log('First time stage 1 - context should be available, then failing to trigger retry');
+                    throw new Error('Intentional failure to trigger retry');
+                } else {
+                    // Second time stage 1: after retry, complete successfully
+                    console.log('Second time stage 1 - completing successfully after retry');
+                    return { result: 'retry_success' };
+                }
+            }
+        });
+
+        taskManager.use('context_child', task => {
+            console.log('Context child task executing:', task.id);
+            // Verify child task has no inherited context
+            assert.equal(task.context, undefined);
+            return { result: 'child_done' };
+        });
+
+        taskManager.start();
+
+        taskId = taskManager.async('context_retry_test');
+        console.log('Created context retry test task:', taskId);
+
+        // Wait for the task to complete (including retry)
+        while (taskManager.getTask(taskId).status !== 'completed') {
+            coroutine.sleep(100);
+        }
+
+        const finalTask = taskManager.getTask(taskId);
+        
+        // Verify the task eventually completed successfully
+        assert.equal(finalTask.status, 'completed');
+        assert.equal(finalTask.result.result, 'retry_success');
+        
+        // Verify context was properly managed:
+        // 1. First execution stage 0 should have no context (undefined)
+        assert.equal(firstStage0Context, undefined, 'First execution stage 0 should start with no context');
+        
+        // 2. Stage 1 should have the context set in stage 0
+        assert.equal(stage1Context.toString('hex'), testContext.toString('hex'), 'Stage 1 should have the context set in stage 0');
+        
+        // 3. Retry execution stage 0 should have reset context to null/undefined (this is the key fix)
+        assert.equal(retryStage0Context, undefined, 'Retry execution stage 0 should have reset context');
+        
+        // 4. Final context should be the one set during successful retry execution
+        assert.equal(finalTask.context.toString('hex'), testContext.toString('hex'), 'Final context should match the one set during successful retry execution');
+        
+        // Verify that the right number of executions occurred
+        assert.equal(executionCount, 4, 'Should have exactly 4 executions: stage 0 (first) -> stage 1 (fail) -> stage 0 (retry) -> stage 1 (success)');
+        
+        // Verify child tasks were created and completed (should have 2 - first execution and retry)
+        const childTasks = taskManager.getChildTasks(taskId);
+        assert.equal(childTasks.length, 2, 'Should have two child tasks (first execution and retry)');
+        childTasks.forEach(childTask => {
+            assert.equal(childTask.status, 'completed', 'All child tasks should be completed');
+            assert.equal(childTask.result.result, 'child_done', 'All child tasks should have correct result');
+        });
+        
+        console.log('Context retry test completed successfully');
+    });
+
+    it("should reset result field when task fails and gets retried", () => {
+        let taskId;
+        let executionCount = 0;
+        let firstExecutionResult;
+        let retryExecutionResult;
+
+        taskManager.use('result_retry_test', (task, next) => {
+            executionCount++;
+            console.log(`Result retry test task execution #${executionCount}:`, task.id);
+            
+            if (executionCount === 1) {
+                // First execution: create child tasks, then fail
+                firstExecutionResult = task.result;
+                
+                return next([
+                    { name: 'result_child' }
+                ]);
+            } else if (executionCount === 2) {
+                // This is the resume after child completion, but we'll fail here
+                console.log('Second execution - failing after child completion');
+                throw new Error('Intentional failure after child completion');
+            } else if (executionCount === 3) {
+                // Third execution (retry): verify result is reset
+                retryExecutionResult = task.result;
+                console.log('Third execution (retry) - checking result reset');
+                
+                // Succeed this time
+                return { result: 'retry_success' };
+            }
+        });
+
+        taskManager.use('result_child', task => {
+            console.log('Result child task executing:', task.id);
+            return { result: 'child_result' };
+        });
+
+        taskManager.start();
+
+        taskId = taskManager.async('result_retry_test');
+        console.log('Created result retry test task:', taskId);
+
+        // Wait for the task to complete (including retry)
+        while (taskManager.getTask(taskId).status !== 'completed') {
+            coroutine.sleep(100);
+        }
+
+        const finalTask = taskManager.getTask(taskId);
+        
+        // Verify the task eventually completed successfully
+        assert.equal(finalTask.status, 'completed');
+        assert.equal(finalTask.result.result, 'retry_success');
+        
+        // Verify result was properly managed:
+        // 1. First execution should have had no result initially
+        assert.equal(firstExecutionResult, undefined, 'First execution should start with no result');
+        
+        // 2. Retry execution should have reset result to null/undefined
+        assert.equal(retryExecutionResult, undefined, 'Retry execution should have reset result');
+        
+        // Verify that exactly 3 executions occurred
+        assert.equal(executionCount, 3, 'Should have exactly 3 executions');
+        
+        // Verify child tasks were created and completed
+        const childTasks = taskManager.getChildTasks(taskId);
+        assert.equal(childTasks.length, 1, 'Should have one child task');
+        assert.equal(childTasks[0].status, 'completed', 'Child task should be completed');
+        assert.equal(childTasks[0].result.result, 'child_result', 'Child task should have correct result');
+        
+        console.log('Result retry test completed successfully');
+    });
+
+    it("should handle timeout task with context reset on retry", () => {
+        let taskId;
+        let executionCount = 0;
+        let firstExecutionContext;
+        let retryExecutionContext;
+        const testContext = Buffer.from([10, 20, 30]);
+
+        taskManager.use('timeout_context_test', (task, next) => {
+            executionCount++;
+            console.log(`Timeout context test execution #${executionCount}:`, task.id);
+            
+            if (executionCount === 1) {
+                // First execution: set context and timeout
+                firstExecutionContext = task.context;
+                console.log('First execution - setting context and timing out');
+                
+                // Simulate a timeout by calling checkTimeout in a loop
+                const startTime = Date.now();
+                task.timeout = 1; // 1 second timeout
+                
+                // Simulate work that exceeds timeout
+                while (Date.now() - startTime < 1500) {
+                    task.checkTimeout(); // This should eventually throw timeout error
+                    coroutine.sleep(100);
+                }
+                
+                // Should not reach here due to timeout
+                return { result: 'should_not_reach' };
+            } else if (executionCount === 2) {
+                // Second execution (retry after timeout): verify context is reset
+                retryExecutionContext = task.context;
+                console.log('Second execution (retry after timeout) - checking context reset');
+                
+                // Don't set timeout this time, and create child tasks
+                return next([
+                    { name: 'timeout_child' }
+                ], testContext);
+            } else if (executionCount === 3) {
+                // Third execution: task resumed after child completion
+                console.log('Third execution - task resumed after child completion');
+                return { result: 'timeout_retry_success' };
+            }
+        });
+
+        taskManager.use('timeout_child', task => {
+            console.log('Timeout child task executing:', task.id);
+            return { result: 'child_after_timeout' };
+        });
+
+        taskManager.start();
+
+        taskId = taskManager.async('timeout_context_test');
+        console.log('Created timeout context test task:', taskId);
+
+        // Wait for the task to complete (including timeout and retry)
+        // This might take longer due to the timeout
+        let waitCount = 0;
+        const maxWait = 100; // Maximum 10 seconds
+        
+        while (taskManager.getTask(taskId).status !== 'completed' && waitCount < maxWait) {
+            coroutine.sleep(100);
+            waitCount++;
+        }
+
+        const finalTask = taskManager.getTask(taskId);
+        
+        // Verify the task eventually completed successfully after timeout retry
+        assert.equal(finalTask.status, 'completed');
+        assert.equal(finalTask.result.result, 'timeout_retry_success');
+        
+        // Verify context was properly managed through timeout and retry:
+        // 1. First execution should have had no context (undefined)
+        assert.equal(firstExecutionContext, undefined, 'First execution should start with no context');
+        
+        // 2. Retry execution after timeout should have reset context to null/undefined
+        assert.equal(retryExecutionContext, undefined, 'Retry execution after timeout should have reset context');
+        
+        // 3. Final context should be the one set during successful execution
+        assert.equal(finalTask.context.toString('hex'), testContext.toString('hex'), 'Final context should match the one set during successful execution');
+        
+        // Verify that exactly 3 executions occurred (initial + timeout + retry + resume)
+        assert.equal(executionCount, 3, 'Should have exactly 3 executions: initial, retry after timeout, and resume');
+        
+        // Verify child tasks were created and completed
+        const childTasks = taskManager.getChildTasks(taskId);
+        assert.equal(childTasks.length, 1, 'Should have one child task');
+        assert.equal(childTasks[0].status, 'completed', 'Child task should be completed');
+        assert.equal(childTasks[0].result.result, 'child_after_timeout', 'Child task should have correct result');
+        
+        console.log('Timeout context retry test completed successfully');
+    });
 });
