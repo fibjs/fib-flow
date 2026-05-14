@@ -1,9 +1,7 @@
-const test = require('test');
+const { describe, it, beforeEach, afterEach } = require('test');
 const assert = require('assert');
 const coroutine = require('coroutine');
 const TaskManager = require('../lib/task.js');
-
-test.setup();
 
 describe('Task Schema Validation', () => {
     let taskManager;

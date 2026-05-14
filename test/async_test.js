@@ -1,5 +1,5 @@
-const test = require('test');
-test.setup();
+const { describe, it, beforeEach, afterEach } = require('test');
+const assert = require('assert');
 
 const coroutine = require('coroutine');
 const { TaskManager } = require('..');

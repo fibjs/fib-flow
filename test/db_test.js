@@ -1,5 +1,5 @@
-const test = require('test');
-test.setup();
+const { describe, it, xit, beforeEach, afterEach } = require('test');
+const assert = require('assert');
 
 const db = require('db');
 const coroutine = require('coroutine');
@@ -14,8 +14,8 @@ function createDBConn() {
     }
     // For memory connections, return a mock connection with type property
     return {
-        close: () => {},
-        execute: () => {},
+        close: () => { },
+        execute: () => { },
         type: 'memory'
     };
 }
@@ -31,10 +31,10 @@ function directUpdateTaskProperty(adapter, taskId, property, value) {
         if (task) {
             // Store old task state for index update
             const oldTask = { ...task };
-            
+
             // Update the property
             task[property] = value;
-            
+
             // Update indexes if we changed a property that affects indexing
             if (['status', 'name', 'tag', 'parent_id', 'next_run_time', 'worker_id'].includes(property)) {
                 adapter._updateIndexes(oldTask, task);
