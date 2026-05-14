@@ -754,6 +754,17 @@ describe("Workflow Tests", () => {
         // Verify child tasks have been executed
         assert.ok(childTaskExecutions >= 4, 'Child tasks should execute at least 4 times (2 child tasks per cron execution)');
 
+        if (lastParentTaskId) {
+            const waitDeadline = Date.now() + 3000;
+            while (Date.now() < waitDeadline) {
+                const candidate = taskManager.getTask(lastParentTaskId);
+                if (candidate && candidate.status !== 'suspended' && candidate.status !== 'running') {
+                    break;
+                }
+                coroutine.sleep(100);
+            }
+        }
+
         // Get all task information needed for verification before stopping taskManager
         const cronTask = taskManager.getTask(cronTaskId);
         let lastParentTask = null;
@@ -905,6 +916,17 @@ describe("Workflow Tests", () => {
         // Verify child tasks have been executed
         assert.ok(childTaskExecutions >= 1, 'Normal child tasks should execute at least 1 time');
         assert.ok(failingChildExecutions >= 1, 'Failing child tasks should execute at least 1 time');
+
+        if (lastParentTaskId) {
+            const waitDeadline = Date.now() + 3000;
+            while (Date.now() < waitDeadline) {
+                const candidate = taskManager.getTask(lastParentTaskId);
+                if (candidate && candidate.status !== 'suspended' && candidate.status !== 'running') {
+                    break;
+                }
+                coroutine.sleep(100);
+            }
+        }
 
         // Get all task information needed for verification before stopping taskManager
         const cronTask = taskManager.getTask(cronTaskId);
