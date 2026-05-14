@@ -3,15 +3,28 @@ const assert = require('assert');
 const coroutine = require('coroutine');
 const TaskManager = require('../lib/task.js');
 
+const TEST_DB_CONNECTION = 'sqlite::memory:';
+
+function directUpdateTaskProperty(taskManager, taskId, property, value) {
+    taskManager.db.pool(conn => {
+        const sql = `UPDATE fib_flow_tasks SET ${property} = ? WHERE id = ?`;
+        conn.execute(sql, value, taskId);
+    });
+}
+
 describe('TaskManager Initialization', () => {
-    it('should create TaskManager without dbConnection', () => {
-        const taskManager = new TaskManager();
-        
-        // Verify that taskManager is created successfully
-        assert.ok(taskManager, 'TaskManager should be created');
-        
-        // Optional: You might want to add more specific checks based on your implementation
-        // For example, checking if the default database adapter is created
+    it('should require explicit dbConnection', () => {
+        assert.throws(() => {
+            new TaskManager();
+        }, /explicit dbConnection/);
+
+        assert.throws(() => {
+            new TaskManager(null);
+        }, /explicit dbConnection/);
+
+        assert.throws(() => {
+            new TaskManager({});
+        }, /explicit dbConnection/);
     });
 
     it('should create TaskManager with custom dbConnection', () => {
@@ -28,7 +41,7 @@ describe('TaskManager Initialization', () => {
     });
 
     it('should use default options when no options are provided', () => {
-        const taskManager = new TaskManager();
+        const taskManager = new TaskManager({ dbConnection: TEST_DB_CONNECTION });
         
         // Verify default options
         assert.ok(taskManager, 'TaskManager should be created');
@@ -46,7 +59,7 @@ describe('TaskManager Initialization', () => {
     });
 
     it('should submit tasks before starting TaskManager', () => {
-        const taskManager = new TaskManager();
+        const taskManager = new TaskManager({ dbConnection: TEST_DB_CONNECTION });
         taskManager.db.setup();
 
         // Register handler first
@@ -76,7 +89,7 @@ describe('TaskManager Initialization', () => {
     });
 
     it('should allow task management operations before start', () => {
-        const taskManager = new TaskManager();
+        const taskManager = new TaskManager({ dbConnection: TEST_DB_CONNECTION });
         taskManager.db.setup();
 
         // Register handler
@@ -105,7 +118,7 @@ describe('TaskManager Initialization', () => {
     });
 
     it('should handle task operations in different manager states', () => {
-        const taskManager = new TaskManager();
+        const taskManager = new TaskManager({ dbConnection: TEST_DB_CONNECTION });
         taskManager.db.setup();
 
         // Register handler
@@ -130,13 +143,38 @@ describe('TaskManager Initialization', () => {
         coroutine.sleep(100);
         taskManager.stop();
     });
+
+    it('should run retention cleanup with configured policy', () => {
+        const taskManager = new TaskManager({
+            dbConnection: TEST_DB_CONNECTION,
+            retention: {
+                expire_time: 1800,
+                statuses: ['completed']
+            }
+        });
+        taskManager.db.setup();
+        taskManager.use('retentionTask', task => ({ success: true }));
+        taskManager.start();
+
+        const taskId = taskManager.async('retentionTask', { data: 'cleanup' });
+        coroutine.sleep(200);
+
+        const now = Math.floor(Date.now() / 1000);
+        directUpdateTaskProperty(taskManager, taskId, 'last_active_time', now - 3600);
+
+        const cleanupResult = taskManager.runRetention({ now });
+        assert.equal(cleanupResult.tasks_deleted, 1);
+        assert.equal(taskManager.getTask(taskId), null);
+
+        taskManager.stop();
+    });
 });
 
 describe('Task Tags', () => {
     let taskManager;
 
     beforeEach(() => {
-        taskManager = new TaskManager();
+        taskManager = new TaskManager({ dbConnection: TEST_DB_CONNECTION });
         taskManager.db.setup();
         
         // Register test handlers
@@ -211,6 +249,7 @@ describe('Task Concurrency', () => {
 
     beforeEach(() => {
         taskManager = new TaskManager({
+            dbConnection: TEST_DB_CONNECTION,
             poll_interval: 100,
             max_retries: 2,
             max_concurrent_tasks: 5

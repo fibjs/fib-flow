@@ -163,3 +163,6 @@ taskManager.use('train_model', async (task) => {
 - Monitor worker health and task completion rates
 - Use appropriate task priorities for critical operations
 - Implement graceful shutdown handling
+- Use lowercase `snake_case` for `task.audit()` checkpoint codes and `task.progress().stage_name`
+- Keep `task.progress().progress_text` short and operator-facing; use `metadata` for structured detail
+- Treat handler audit/progress data as stable platform signals, not ad hoc debug strings

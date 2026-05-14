@@ -121,10 +121,12 @@ Note: The `dbType` parameter is only required when using a connection pool. When
 
 ## Automatic Initialization
 
-You can now create a `TaskManager` without explicitly providing a database connection. In such cases, an in-memory SQLite database will be automatically created:
+`TaskManager` now requires an explicit database connection. If you want an in-memory backend for tests or single-process usage, specify SQLite in-memory mode directly:
 
 ```javascript
-const taskManager = new TaskManager(); // No database connection specified
+const taskManager = new TaskManager({
+    dbConnection: 'sqlite::memory:'
+});
 taskManager.db.setup(); // Initialize database schema
 ```
 
@@ -137,7 +139,7 @@ This feature is particularly beneficial for single-instance, in-process scenario
 - Tasks are executed within a single process or application
 
 Benefits in single-instance scenarios:
-- Zero configuration overhead
+- Explicit environment configuration
 - Minimal performance impact
 - Simplified task management for local, non-distributed workloads
 - Ideal for microservices, background processing, and event-driven architectures

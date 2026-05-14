@@ -76,6 +76,47 @@ describe("Workflow Tests", () => {
         assert.equal(children[0].result.result, 'child1_result');
         assert.equal(children[1].status, 'completed');
         assert.equal(children[1].result.result, 'child2_result');
+
+        const parentEvents = taskManager.getTaskEvents(parentTaskId);
+        const subtasksCreatedEvent = parentEvents.find(event => event.event_type === 'task_subtasks_created');
+        assert.ok(subtasksCreatedEvent);
+        assert.equal(subtasksCreatedEvent.from_status, 'running');
+        assert.equal(subtasksCreatedEvent.to_status, 'suspended');
+        assert.equal(subtasksCreatedEvent.metadata.child_count, 2);
+        assert.equal(subtasksCreatedEvent.metadata.child_task_ids.length, 2);
+
+        assert.ok(parentEvents.some(event =>
+            event.event_type === 'task_status_changed' &&
+            event.from_status === 'running' &&
+            event.to_status === 'suspended' &&
+            event.metadata.suspend_reason === 'awaiting_subtasks'
+        ));
+
+        assert.ok(parentEvents.some(event =>
+            event.event_type === 'task_status_changed' &&
+            event.from_status === 'suspended' &&
+            event.to_status === 'pending' &&
+            event.metadata.resume_reason === 'children_completed'
+        ));
+
+        const parentAttempts = taskManager.getTaskAttempts(parentTaskId);
+        assert.equal(parentAttempts.length, 2);
+        assert.equal(parentAttempts[0].attempt, 1);
+        assert.equal(parentAttempts[0].outcome, 'suspended');
+        assert.ok(parentAttempts[0].ended_at >= parentAttempts[0].started_at);
+        assert.equal(parentAttempts[1].attempt, 2);
+        assert.equal(parentAttempts[1].outcome, 'completed');
+        assert.ok(parentAttempts[1].ended_at >= parentAttempts[1].started_at);
+
+        const child1Attempts = taskManager.getTaskAttempts(children[0].id);
+        assert.equal(child1Attempts.length, 1);
+        assert.equal(child1Attempts[0].attempt, 1);
+        assert.equal(child1Attempts[0].outcome, 'completed');
+
+        const child2Attempts = taskManager.getTaskAttempts(children[1].id);
+        assert.equal(child2Attempts.length, 1);
+        assert.equal(child2Attempts[0].attempt, 1);
+        assert.equal(child2Attempts[0].outcome, 'completed');
     });
 
     it("should handle task failure", () => {
@@ -184,6 +225,269 @@ describe("Workflow Tests", () => {
         assert.equal(leafTasks.length, 1);
         assert.equal(leafTasks[0].status, 'completed');
         assert.equal(leafTasks[0].result.result, 'leaf_done');
+    });
+
+    it("should expose workflow audit views with task and event pagination", () => {
+        let rootTaskId;
+
+        taskManager.use('audit_root', (task, next) => {
+            task.audit('root_entered', {
+                message: 'Root entered',
+                metadata: { stage: task.stage }
+            });
+
+            if (task.stage === 0) {
+                return next([
+                    { name: 'audit_child', payload: { index: 1 } },
+                    { name: 'audit_child', payload: { index: 2 } }
+                ]);
+            }
+
+            task.audit('root_resumed', {
+                message: 'Root resumed',
+                metadata: { stage: task.stage }
+            });
+
+            return { ok: true };
+        });
+
+        taskManager.use('audit_child', (task) => {
+            task.audit('child_processed', {
+                message: 'Child processed',
+                metadata: { index: task.payload.index }
+            });
+            return { ok: task.payload.index };
+        });
+
+        taskManager.start();
+
+        rootTaskId = taskManager.async('audit_root', { workflow: true });
+
+        while (taskManager.getTask(rootTaskId).status !== 'completed') {
+            coroutine.sleep(100);
+        }
+
+        const workflowAudit = taskManager.getWorkflowAudit(rootTaskId, {
+            tasks: {
+                limit: 10,
+                order: 'asc'
+            },
+            events: {
+                event_type: 'task_checkpoint',
+                limit: 10,
+                order: 'asc'
+            }
+        });
+
+        assert.equal(workflowAudit.root_task.id, rootTaskId);
+        assert.equal(workflowAudit.tasks.total, 3);
+        assert.equal(workflowAudit.tasks.items.length, 3);
+        assert.equal(workflowAudit.events.total, 5);
+        assert.equal(workflowAudit.events.items[0].metadata.code, 'root_entered');
+        assert.equal(workflowAudit.events.items[1].metadata.code, 'child_processed');
+        assert.equal(workflowAudit.events.items[2].metadata.code, 'child_processed');
+        assert.equal(workflowAudit.events.items[3].metadata.code, 'root_entered');
+        assert.equal(workflowAudit.events.items[4].metadata.code, 'root_resumed');
+
+        const workflowEventPage = taskManager.queryWorkflowEvents(rootTaskId, {
+            event_type: 'task_checkpoint',
+            limit: 2,
+            offset: 1,
+            order: 'asc'
+        });
+        assert.equal(workflowEventPage.total, 5);
+        assert.equal(workflowEventPage.items.length, 2);
+
+        const workflowTaskPage = taskManager.queryTasks({
+            workflow_root_id: rootTaskId,
+            limit: 2,
+            offset: 0,
+            order: 'asc'
+        });
+        assert.equal(workflowTaskPage.total, 3);
+        assert.equal(workflowTaskPage.items.length, 2);
+        assert.equal(workflowTaskPage.has_more, true);
+    });
+
+    it("should expose workflow attempt aggregation summary", () => {
+        let parentTaskId;
+
+        taskManager.use('summary_parent', (task, next) => {
+            if (task.stage === 0) {
+                task.audit('parent_stage_0', {
+                    message: 'Parent first stage'
+                });
+
+                return next([
+                    { name: 'summary_child_success' },
+                    { name: 'summary_child_failure' }
+                ]);
+            }
+
+            task.audit('parent_stage_1', {
+                message: 'Parent resumed stage'
+            });
+            return { finished: true };
+        });
+
+        taskManager.use('summary_child_success', (task) => {
+            task.audit('child_success', {
+                message: 'Child success completed'
+            });
+            return { ok: true };
+        });
+
+        taskManager.use('summary_child_failure', () => {
+            throw new Error('summary child failed');
+        });
+
+        taskManager.start();
+
+        parentTaskId = taskManager.async('summary_parent', { audited: true });
+
+        while (taskManager.getTask(parentTaskId).status !== 'completed') {
+            coroutine.sleep(100);
+        }
+
+        const workflowAttempts = taskManager.queryWorkflowAttempts(parentTaskId, {
+            limit: 10,
+            order: 'asc'
+        });
+        assert.equal(workflowAttempts.total, 5);
+        assert.equal(workflowAttempts.items.length, 5);
+        assert.equal(workflowAttempts.items[0].outcome, 'suspended');
+        assert.ok(workflowAttempts.items.some(attempt => attempt.outcome === 'failed'));
+
+        const workflowSummary = taskManager.getWorkflowAuditSummary(parentTaskId);
+        assert.equal(workflowSummary.root_task.id, parentTaskId);
+        assert.equal(workflowSummary.totals.tasks, 3);
+        assert.equal(workflowSummary.totals.attempts, 5);
+        assert.equal(workflowSummary.totals.max_attempt, 2);
+        assert.equal(workflowSummary.statuses.completed, 2);
+        assert.equal(workflowSummary.statuses.permanently_failed, 1);
+        assert.equal(workflowSummary.attempt_outcomes.suspended, 1);
+        assert.equal(workflowSummary.attempt_outcomes.completed, 2);
+        assert.equal(workflowSummary.attempt_outcomes.failed, 2);
+        assert.equal(workflowSummary.task_names.summary_parent, 1);
+        assert.equal(workflowSummary.task_names.summary_child_success, 1);
+        assert.equal(workflowSummary.task_names.summary_child_failure, 1);
+        assert.ok(workflowSummary.workers.length >= 1);
+        assert.equal(workflowSummary.failed_tasks.length, 1);
+        assert.equal(workflowSummary.failed_tasks[0].name, 'summary_child_failure');
+        assert.equal(workflowSummary.failed_tasks[0].status, 'permanently_failed');
+        assert.equal(workflowSummary.slowest_attempts.length, 5);
+        assert.ok(workflowSummary.slowest_attempts.every(attempt => 'duration_seconds' in attempt));
+        assert.ok(workflowSummary.timing.last_event_time >= workflowSummary.timing.created_at);
+    });
+
+    it("should expose workflow critical path and stage timing analysis", () => {
+        let rootTaskId;
+
+        taskManager.use('analysis_root', (task, next) => {
+            if (task.stage === 0) {
+                coroutine.sleep(1200);
+                return next([
+                    { name: 'analysis_child_fast' },
+                    { name: 'analysis_child_slow' }
+                ]);
+            }
+
+            coroutine.sleep(1200);
+            return { complete: true };
+        });
+
+        taskManager.use('analysis_child_fast', () => {
+            coroutine.sleep(1200);
+            return { speed: 'fast' };
+        });
+
+        taskManager.use('analysis_child_slow', () => {
+            coroutine.sleep(3200);
+            return { speed: 'slow' };
+        });
+
+        taskManager.start();
+
+        rootTaskId = taskManager.async('analysis_root', { analysis: true });
+
+        while (taskManager.getTask(rootTaskId).status !== 'completed') {
+            coroutine.sleep(100);
+        }
+
+        const workflowSummary = taskManager.getWorkflowAuditSummary(rootTaskId);
+        assert.equal(workflowSummary.stage_timings.length, 2);
+        assert.equal(workflowSummary.stage_timings[0].stage, 0);
+        assert.equal(workflowSummary.stage_timings[0].outcome, 'suspended');
+        assert.equal(workflowSummary.stage_timings[1].stage, 1);
+        assert.equal(workflowSummary.stage_timings[1].outcome, 'completed');
+        assert.ok(workflowSummary.stage_timings[0].duration_seconds >= 0);
+
+        assert.ok(workflowSummary.critical_path.total_duration_seconds >= 0);
+        assert.equal(workflowSummary.critical_path.nodes.length, 2);
+        assert.equal(workflowSummary.critical_path.nodes[0].name, 'analysis_root');
+        assert.equal(workflowSummary.critical_path.nodes[1].name, 'analysis_child_slow');
+    });
+
+    it("should summarize pending workflows without attempts", () => {
+        taskManager.use('pending_summary_root', () => {
+            return { should_not_run: true };
+        });
+
+        const rootTaskId = taskManager.async('pending_summary_root', { queued: true });
+        const workflowSummary = taskManager.getWorkflowAuditSummary(rootTaskId);
+
+        assert.equal(workflowSummary.root_task.id, rootTaskId);
+        assert.equal(workflowSummary.root_task.status, 'pending');
+        assert.equal(workflowSummary.totals.tasks, 1);
+        assert.equal(workflowSummary.totals.attempts, 0);
+        assert.equal(workflowSummary.stage_timings.length, 0);
+        assert.equal(workflowSummary.timing.first_started_at, null);
+        assert.equal(workflowSummary.timing.last_ended_at, null);
+        assert.equal(workflowSummary.timing.workflow_duration_seconds, null);
+        assert.equal(workflowSummary.critical_path.total_duration_seconds, 0);
+        assert.equal(workflowSummary.critical_path.nodes.length, 1);
+        assert.equal(workflowSummary.critical_path.nodes[0].task_id, rootTaskId);
+        assert.equal(workflowSummary.critical_path.nodes[0].attempt, null);
+        assert.equal(workflowSummary.critical_path.nodes[0].duration_seconds, null);
+    });
+
+    it("should use deterministic task id tie-breaking for equal workflow critical paths", () => {
+        let rootTaskId;
+
+        taskManager.use('tie_root', (task, next) => {
+            if (task.stage === 0) {
+                coroutine.sleep(1200);
+                return next([
+                    { name: 'tie_child_a' },
+                    { name: 'tie_child_b' }
+                ]);
+            }
+
+            return { done: true };
+        });
+
+        taskManager.use('tie_child_a', () => {
+            coroutine.sleep(1200);
+            return { branch: 'a' };
+        });
+
+        taskManager.use('tie_child_b', () => {
+            coroutine.sleep(1200);
+            return { branch: 'b' };
+        });
+
+        taskManager.start();
+
+        rootTaskId = taskManager.async('tie_root');
+
+        while (taskManager.getTask(rootTaskId).status !== 'completed') {
+            coroutine.sleep(100);
+        }
+
+        const children = taskManager.getChildTasks(rootTaskId).slice().sort((left, right) => left.id - right.id);
+        const workflowSummary = taskManager.getWorkflowAuditSummary(rootTaskId);
+        assert.equal(workflowSummary.critical_path.nodes.length, 2);
+        assert.equal(workflowSummary.critical_path.nodes[1].task_id, children[0].id);
     });
 
     it("should handle task context", () => {

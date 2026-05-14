@@ -58,8 +58,8 @@ Configuration inheritance rules:
 - Task instance options override handler defaults
 - Child tasks inherit retry settings from parent unless explicitly overridden
 - Parent tasks remain `suspended` until all children reach terminal states
-- Cancelling a parent task automatically cancels all pending children
-- Resume operations trigger re-execution of failed children only
+- Parent tasks resume to `pending` and advance `stage` only after all children complete successfully
+- Child failure propagation is handled by state transitions and retry logic, not by a separate workflow callback
 
 ### Task Context
 Context only belongs to individual tasks:

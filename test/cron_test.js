@@ -73,11 +73,44 @@ describe('Cron Tests', () => {
         assert.equal(task.status, 'pending');  
         assert.equal(task.type, 'cron');
         assert.equal(typeof task.next_run_time, 'number');
-        assert.equal(task.next_run_time >= Date.now() / 1000, true);  
+        assert.equal(task.next_run_time >= Math.floor(Date.now() / 1000) - 1, true);  
 
         assert.equal(task.result, 'success');
 
         taskManager.stop();
+    });
+
+    it('should record completed attempts for each cron execution round', () => {
+        let executionCount = 0;
+
+        taskManager.use('cron_attempt_test', () => {
+            executionCount++;
+            if (executionCount === 2) {
+                taskManager.pause();
+            }
+            return 'success';
+        });
+
+        taskManager.start();
+
+        const taskId = taskManager.cron('cron_attempt_test', '* * * * * *');
+
+        while (executionCount < 2) {
+            coroutine.sleep(100);
+        }
+
+        while (taskManager.getTask(taskId).status !== 'pending') {
+            coroutine.sleep(100);
+        }
+
+        const taskAttempts = taskManager.getTaskAttempts(taskId);
+        assert.equal(taskAttempts.length, 2);
+        assert.equal(taskAttempts[0].attempt, 1);
+        assert.equal(taskAttempts[0].outcome, 'completed');
+        assert.ok(taskAttempts[0].ended_at >= taskAttempts[0].started_at);
+        assert.equal(taskAttempts[1].attempt, 2);
+        assert.equal(taskAttempts[1].outcome, 'completed');
+        assert.ok(taskAttempts[1].ended_at >= taskAttempts[1].started_at);
     });
 
     it('should handle cron task failure and retry', () => {

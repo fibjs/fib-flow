@@ -91,6 +91,171 @@ describe('Async Tasks', () => {
         assert.equal(task.status, 'permanently_failed');
     });
 
+    it('should record handler checkpoints and expose paged task audit views', () => {
+        let handlerStatus;
+        let handlerWorkerId;
+        let handlerAttempt;
+
+        taskManager.use('audited_task', (task) => {
+            handlerStatus = task.status;
+            handlerWorkerId = task.worker_id;
+            handlerAttempt = task.attempt;
+
+            const checkpointId1 = task.audit('payload_validated', {
+                message: 'Payload validated',
+                metadata: { step: 1 }
+            });
+            const checkpointId2 = task.audit({
+                code: 'remote_call_started',
+                message: 'Remote call started',
+                metadata: { provider: 'demo' }
+            });
+
+            assert.ok(checkpointId1 > 0);
+            assert.ok(checkpointId2 > 0);
+
+            return { success: true };
+        });
+
+        taskManager.start();
+
+        const taskId = taskManager.async('audited_task', { hello: 'world' });
+        coroutine.sleep(1000);
+
+        assert.equal(handlerStatus, 'running');
+        assert.ok(handlerWorkerId);
+        assert.equal(handlerAttempt, 1);
+
+        const checkpointEvents = taskManager.getTaskEvents(taskId, {
+            event_type: 'task_checkpoint'
+        });
+        assert.equal(checkpointEvents.length, 2);
+        assert.equal(checkpointEvents[0].attempt, 1);
+        assert.equal(checkpointEvents[0].metadata.code, 'payload_validated');
+        assert.equal(checkpointEvents[1].metadata.code, 'remote_call_started');
+
+        const eventPage = taskManager.queryTaskEvents(taskId, {
+            event_type: 'task_checkpoint',
+            limit: 1,
+            offset: 0
+        });
+        assert.equal(eventPage.total, 2);
+        assert.equal(eventPage.items.length, 1);
+        assert.equal(eventPage.has_more, true);
+
+        const attemptPage = taskManager.queryTaskAttempts(taskId, {
+            limit: 5,
+            offset: 0
+        });
+        assert.equal(attemptPage.total, 1);
+        assert.equal(attemptPage.items.length, 1);
+        assert.equal(attemptPage.items[0].outcome, 'completed');
+
+        const taskAudit = taskManager.getTaskAudit(taskId, {
+            events: {
+                event_type: 'task_checkpoint',
+                limit: 10
+            },
+            attempts: {
+                limit: 10
+            }
+        });
+        assert.equal(taskAudit.task.id, taskId);
+        assert.equal(taskAudit.events.total, 2);
+        assert.equal(taskAudit.attempts.total, 1);
+    });
+
+    it('should persist task progress snapshots and progress events', () => {
+        taskManager.use('progress_task', (task) => {
+            const progressId1 = task.progress('Downloading input', {
+                stage_name: 'download',
+                progress_percent: 20,
+                metadata: { chunk: 1 }
+            });
+
+            const progressId2 = task.progress({
+                stage_name: 'transform',
+                progress_text: 'Transforming records',
+                progress_percent: 75,
+                message: 'Transform stage running',
+                metadata: { transformed: 15 }
+            });
+
+            assert.ok(progressId1 > 0);
+            assert.ok(progressId2 > 0);
+            return { ok: true };
+        });
+
+        taskManager.start();
+
+        const taskId = taskManager.async('progress_task', { value: 1 });
+        coroutine.sleep(1000);
+
+        const task = taskManager.getTask(taskId);
+        assert.equal(task.current_stage_name, 'transform');
+        assert.equal(task.progress_text, 'Transforming records');
+        assert.equal(task.progress_percent, 75);
+        assert.equal(task.last_event_type, 'task_completed');
+        assert.ok(task.last_event_time >= task.created_at);
+
+        const progressEvents = taskManager.getTaskEvents(taskId, {
+            event_type: 'task_progress'
+        });
+        assert.equal(progressEvents.length, 2);
+        assert.equal(progressEvents[0].metadata.stage_name, 'download');
+        assert.equal(progressEvents[0].metadata.progress_percent, 20);
+        assert.equal(progressEvents[1].metadata.stage_name, 'transform');
+        assert.equal(progressEvents[1].metadata.transformed, 15);
+    });
+
+    it('should normalize and validate handler audit naming inputs', () => {
+        taskManager.use('naming_task', (task) => {
+            const checkpointId = task.audit('  payload_validated  ', {
+                message: '  Payload validated  ',
+                metadata: { step: 1 }
+            });
+            const progressId = task.progress('  Downloading input  ', {
+                stage_name: '  download_phase  ',
+                message: '  downloading  '
+            });
+
+            assert.ok(checkpointId > 0);
+            assert.ok(progressId > 0);
+
+            assert.throws(() => {
+                task.audit('Invalid Code');
+            }, /snake_case/);
+
+            assert.throws(() => {
+                task.progress({ stage_name: 'Invalid Stage' });
+            }, /snake_case/);
+
+            assert.throws(() => {
+                task.progress({ progress_text: '   ' });
+            }, /must not be empty/);
+
+            return { ok: true };
+        });
+
+        taskManager.start();
+
+        const taskId = taskManager.async('naming_task', { value: 1 });
+        coroutine.sleep(1000);
+
+        const checkpointEvents = taskManager.getTaskEvents(taskId, {
+            event_type: 'task_checkpoint'
+        });
+        assert.equal(checkpointEvents[0].metadata.code, 'payload_validated');
+        assert.equal(checkpointEvents[0].message, 'Payload validated');
+
+        const progressEvents = taskManager.getTaskEvents(taskId, {
+            event_type: 'task_progress'
+        });
+        assert.equal(progressEvents[0].metadata.stage_name, 'download_phase');
+        assert.equal(progressEvents[0].metadata.progress_text, 'Downloading input');
+        assert.equal(progressEvents[0].message, 'downloading');
+    });
+
     it('should handle task resume', () => {
         let executionCount = 0;
         taskManager.use('resume_task', (task) => {
@@ -122,6 +287,49 @@ describe('Async Tasks', () => {
         assert.equal(completedTask.status, 'completed');
         assert.equal(executionCount, 2);
         assert.deepEqual(completedTask.result, { success: true });
+
+        const taskAttempts = taskManager.getTaskAttempts(taskId);
+        assert.equal(taskAttempts.length, 2);
+        assert.equal(taskAttempts[0].attempt, 1);
+        assert.equal(taskAttempts[0].outcome, 'paused');
+        assert.ok(taskAttempts[0].ended_at >= taskAttempts[0].started_at);
+        assert.equal(taskAttempts[1].attempt, 2);
+        assert.equal(taskAttempts[1].outcome, 'completed');
+        assert.ok(taskAttempts[1].ended_at >= taskAttempts[1].started_at);
+    });
+
+    it('should emit pause and generic resume audit events for manually resumed tasks', () => {
+        let executionCount = 0;
+        taskManager.use('resume_event_task', (task) => {
+            executionCount++;
+            if (executionCount === 1) {
+                taskManager.pauseTask(task.id);
+                return;
+            }
+
+            return { ok: true };
+        });
+
+        taskManager.start();
+
+        const taskId = taskManager.async('resume_event_task');
+        coroutine.sleep(500);
+
+        taskManager.resumeTask(taskId);
+        coroutine.sleep(1000);
+
+        const events = taskManager.getTaskEvents(taskId);
+        assert.ok(events.some(event =>
+            event.event_type === 'task_paused'
+            && event.from_status === 'running'
+            && event.to_status === 'paused'
+        ));
+        assert.ok(events.some(event =>
+            event.event_type === 'task_status_changed'
+            && event.from_status === 'paused'
+            && event.to_status === 'pending'
+        ));
+        assert.ok(!events.some(event => event.event_type === 'task_resumed'));
     });
 
     it('should reset retry count when resuming task', () => {

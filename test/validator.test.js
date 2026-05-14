@@ -3,11 +3,13 @@ const assert = require('assert');
 const coroutine = require('coroutine');
 const TaskManager = require('../lib/task.js');
 
+const TEST_DB_CONNECTION = 'sqlite::memory:';
+
 describe('Task Schema Validation', () => {
     let taskManager;
 
     beforeEach(() => {
-        taskManager = new TaskManager();
+        taskManager = new TaskManager({ dbConnection: TEST_DB_CONNECTION });
         taskManager.db.setup();
     });
 

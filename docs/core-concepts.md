@@ -185,3 +185,14 @@ taskManager.use('errorTask', async (task) => {
     }
 });
 ```
+
+## Audit Snapshot vs History
+
+fib-flow keeps two related but different views of task execution:
+
+- The task table stores the latest snapshot used by the scheduler and lightweight status queries.
+- The audit event table and attempt table store the execution history used for replay and diagnosis.
+
+Fields such as `current_stage_name`, `progress_text`, `progress_percent`, `last_event_time`, and `last_event_type` are cache-like snapshot fields for platform display. They are not the authoritative audit history.
+
+If you need to answer questions such as "what happened", "which worker ran this attempt", or "why did this workflow stop", use task events and attempts instead of inferring history from the latest task row.

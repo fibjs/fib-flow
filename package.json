@@ -5,7 +5,7 @@
   "main": "lib/index.js",
   "scripts": {
     "test": "fibjs test",
-    "memory": "fibjs test --memory"
+    "typecheck": "fibjs --check"
   },
   "dependencies": {
     "fib-pool": "^1.6.0",

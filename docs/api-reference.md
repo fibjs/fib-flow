@@ -9,6 +9,8 @@ The API is designed to be intuitive and developer-friendly, allowing you to quic
   - [Task Creation](#task-creation)
   - [Task Control](#task-control)
   - [Task Query](#task-query)
+    - [Audit Query](#audit-query)
+    - [Handler Audit](#handler-audit)
   - [Task Lifecycle](#task-lifecycle)
 
 ## TaskManager
@@ -19,7 +21,7 @@ The TaskManager is the core component responsible for managing task lifecycles, 
 /**
  * Create a task manager instance
  * @param {Object} options Configuration options
- * @param {string|object} options.dbConnection Database connection string or object
+ * @param {string|object} options.dbConnection Required database connection string or object
  * @param {string} [options.dbType] Database type ('sqlite', 'mysql', or 'postgres')
  * @param {number} [options.poll_interval=1000] Poll interval in milliseconds
  * @param {number} [options.max_retries=3] Default maximum retry attempts
@@ -29,6 +31,9 @@ The TaskManager is the core component responsible for managing task lifecycles, 
  * @param {number} [options.active_update_interval=1000] Active time update interval in milliseconds
  * @param {string} [options.worker_id] Unique identifier for this worker (auto-generated if not provided)  
  * @param {number} [options.expire_time=86400] Time in seconds after which completed/failed tasks are deleted (1 day)
+ * @param {Object} [options.retention] Explicit retention policy for expired terminal tasks
+ * @param {number} [options.retention.expire_time] Expiration window in seconds
+ * @param {Array<string>} [options.retention.statuses] Terminal statuses eligible for cleanup; defaults to ['completed', 'permanently_failed']
  */
 new TaskManager(options)
 ```
@@ -157,7 +162,11 @@ const taskManager = new TaskManager({
     timeout: 60,                // Default task timeout in seconds
     max_concurrent_tasks: 10,   // Maximum concurrent tasks
     active_update_interval: 1000, // Active time update interval
-    expire_time: 86400          // Task expiration time (1 day)
+    expire_time: 86400,         // Backward-compatible retention shortcut
+    retention: {
+        expire_time: 86400,
+        statuses: ['completed', 'permanently_failed']
+    }
 });
 ```
 
@@ -252,7 +261,15 @@ resumeTask(taskId)
  * @param {string} taskId Task ID
  */
 pauseTask(taskId)
+
+/**
+ * Run retention cleanup for expired terminal tasks and their audit records
+ * @param {Object} [policy] Optional retention policy override
+ */
+runRetention(policy)
 ```
+
+`expire_time` remains supported as a backward-compatible shortcut. Prefer `retention` when you need explicit control over retention statuses or want to make the cleanup policy obvious in configuration.
 
 ### Task Query
 Query methods allow you to retrieve task information and monitor task status across the system.
@@ -281,6 +298,8 @@ getTaskStatsByTag(tag, status)
 // Delete tasks with multiple filter conditions
 deleteTasks(filters)
 ```
+
+`getTasks()` remains the lightweight snapshot query API. When you need pagination metadata or workflow-scoped task views, use `queryTasks()` from the audit query section.
 
 #### getTasks
 The `getTasks` method provides flexible task querying with multiple filter conditions:
@@ -335,6 +354,191 @@ Status Values:
 - permanently_failed: Failed task that exceeded retry attempts
 - paused: Task manually paused
 - suspended: Parent task waiting for children
+
+### Audit Query
+Execution audit APIs expose persisted events, attempts, and structured task/workflow audit views.
+
+For a detailed event catalog and semantics matrix, see [Execution Audit Events](execution-audit-events.md).
+For retention scope and current cleanup semantics, see [Audit Retention Policy](audit-retention-policy.md).
+
+```javascript
+// Query task events with pagination metadata
+queryTaskEvents(taskId, {
+    event_type,
+    event_types,
+    worker_id,
+    attempt,
+    stage,
+    started_after,
+    started_before,
+    limit,
+    offset,
+    order
+})
+
+// Query workflow events with the same filters
+queryWorkflowEvents(rootId, filters)
+
+// Query attempts for a task
+queryTaskAttempts(taskId, {
+    worker_id,
+    outcome,
+    started_after,
+    started_before,
+    ended_after,
+    ended_before,
+    open_only,
+    limit,
+    offset,
+    order
+})
+
+// Query attempts for all tasks in a workflow
+queryWorkflowAttempts(rootId, {
+    worker_id,
+    outcome,
+    started_after,
+    started_before,
+    ended_after,
+    ended_before,
+    open_only,
+    limit,
+    offset,
+    order
+})
+
+// Query tasks with pagination metadata
+queryTasks({
+    name,
+    status,
+    type,
+    tag,
+    worker_id,
+    parent_id,
+    root_id,
+    workflow_root_id,
+    limit,
+    offset,
+    order
+})
+
+// Structured audit views
+getTaskAudit(taskId, {
+    events: { limit: 50, order: 'asc' },
+    attempts: { limit: 20, order: 'asc' }
+})
+
+getWorkflowAudit(rootId, {
+    tasks: { limit: 100, order: 'asc' },
+    events: { limit: 200, order: 'asc' }
+})
+
+// Aggregate workflow-level diagnosis
+getWorkflowAuditSummary(rootId)
+```
+
+Paged audit APIs return this shape:
+
+```javascript
+{
+    items: [...],
+    total: 42,
+    limit: 10,
+    offset: 0,
+    has_more: true
+}
+```
+
+`getTaskAudit()` returns the current task snapshot together with paged `events` and `attempts`.
+`getWorkflowAudit()` returns the root task snapshot together with paged `tasks` and `events` for the workflow.
+`getWorkflowAuditSummary()` returns a platform-oriented aggregate view including status counts, attempt outcome counts, workers, timing boundaries, root workflow stage timings, failed tasks, a best-effort critical path estimate, and the slowest workflow attempts.
+
+Recommended query patterns:
+
+- Use `queryTaskEvents()` when diagnosing one task execution round, especially with `attempt`, `event_type`, and `order: 'asc'`.
+- Use `queryWorkflowEvents()` when reconstructing workflow timelines across parent and child tasks. Prefer `event_type` or `event_types` plus pagination rather than loading every event into an operator-facing page.
+- Use `queryTaskAttempts()` or `queryWorkflowAttempts()` when the question is about worker rounds, retry cadence, open executions, or duration analysis. Prefer attempt queries over deriving rounds from event sequences.
+- Use `getTaskAudit()` and `getWorkflowAudit()` for operator drill-down pages. Use `getWorkflowAuditSummary()` for aggregate diagnosis, not for exact replay.
+
+Summary field semantics:
+
+- `timing.first_started_at`: the earliest `started_at` among workflow attempts.
+- `timing.last_ended_at`: the latest non-null `ended_at` among workflow attempts.
+- `timing.last_event_time`: the latest workflow event time currently visible in the event table.
+- `timing.workflow_duration_seconds`: `last_ended_at - root_task.created_at` when both values exist; otherwise `null`.
+- `stage_timings`: derived from root task attempts plus root task `task_started` / `task_retry_started` events. Pending workflows or workflows without attempts return an empty array.
+- `failed_tasks`: terminal workflow tasks currently in `failed`, `timeout`, `permanently_failed`, or `paused` status. This is a latest-snapshot view, not a historical list of every failed round.
+- `critical_path`: a best-effort path built from the longest persisted representative attempt per task plus the longest child branch. When sibling branches tie, the implementation falls back to deterministic task id ordering.
+- `slowest_attempts`: the top 5 attempts sorted by persisted duration, then start time.
+
+Operational boundaries:
+
+- `getWorkflowAuditSummary()` currently reads the full task, event, and attempt set for the workflow before aggregating in memory. It is intended for platform diagnosis, not for arbitrarily large workflow scans in hot paths.
+- Because persisted timing is second-granularity, very short or same-second attempts may collapse to equal durations. In those cases `critical_path`, `stage_timings`, and `slowest_attempts` remain deterministic but should be read as approximations.
+- After retention deletes historical rows, audit and summary APIs describe only the remaining retained data. The platform does not promise long-term completeness after deletion-based retention has run.
+
+The current `critical_path` is an estimate derived from persisted attempt durations along the workflow tree. It is useful for platform diagnosis, but it should not be treated as a perfect replacement for a distributed trace.
+Because persisted task timing is currently stored in whole seconds, very short stages or sibling tasks may collapse to the same duration and rely on deterministic tie-breaking.
+
+### Handler Audit
+Handlers can emit structured checkpoint events during execution through `task.audit()`.
+
+```javascript
+taskManager.use('import_user', async (task) => {
+    task.audit('payload_validated', {
+        message: 'Payload validated',
+        metadata: { source: task.payload.source }
+    });
+
+    task.audit({
+        code: 'remote_call_started',
+        message: 'Remote call started',
+        metadata: { provider: 'crm' }
+    });
+
+    return { imported: true };
+});
+```
+
+Checkpoint events are written as `task_checkpoint` audit events and automatically include the current task, workflow, worker, and open attempt context.
+
+Naming conventions:
+
+- `checkpoint.code` should use lowercase `snake_case`, for example `payload_validated` or `remote_call_started`.
+- `message` is optional, but when provided it should be display text rather than another identifier.
+- `metadata` should remain structured and machine-readable.
+
+Handlers can also update the task snapshot with lightweight progress state through `task.progress()`.
+
+```javascript
+taskManager.use('import_user', async (task) => {
+    task.progress('Downloading source data', {
+        stage_name: 'download',
+        progress_percent: 20,
+        metadata: { chunk: 1 }
+    });
+
+    task.progress({
+        stage_name: 'transform',
+        progress_text: 'Transforming records',
+        progress_percent: 75,
+        message: 'Transform stage running',
+        metadata: { transformed: 15 }
+    });
+
+    return { imported: true };
+});
+```
+
+`task.progress()` writes a `task_progress` event and updates these task snapshot fields when provided: `current_stage_name`, `progress_text`, `progress_percent`. All audit events also keep `last_event_time` and `last_event_type` in the main task snapshot for lightweight platform queries.
+
+These snapshot fields are convenience cache only. Platform replay, audit diagnosis, and historical reconstruction should use the persisted event and attempt records as the source of truth.
+
+Progress conventions:
+
+- `stage_name` should use lowercase `snake_case`, for example `download_phase` or `waiting_children`.
+- `progress_text` should be short user-facing text.
+- `progress_percent` should describe coarse operator-visible progress, not sub-second execution precision.
 
 #### deleteTasks
 The `deleteTasks` method provides flexible task deletion with multiple filter conditions:
