@@ -62,6 +62,16 @@ Notes:
 - Function form handlers use global TaskManager defaults
 - Invalid handler registration will throw an error
 
+### Hot Reload Semantics
+
+Handlers can be updated or removed while the TaskManager is running:
+
+- `taskManager.use(name, handler)` replaces the live handler definition for future task claims.
+- `taskManager.unuse(name)` removes the live handler definition so new submissions and future claims stop using it.
+- A task attempt that is already executing keeps the handler version captured when that attempt started.
+- A paused or suspended task that resumes later uses the latest live handler, because resume returns it to `pending` and it is claimed again.
+- Child tasks created by a running parent use the live child handler definition at the moment the child task is created.
+
 ## Worker Specialization
 
 ### Load Balancing

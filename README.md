@@ -7,6 +7,7 @@ A powerful workflow management system built on fibjs for orchestrating complex t
 - **Workflow Management**: Parent-child task relationships, automatic state propagation
 - **Task Types**: Async tasks and cron jobs with priorities and delays
 - **State Management**: Comprehensive task lifecycle and state transitions
+- **Hot Reload**: Update or remove handlers at runtime without restarting workers
 - **Reliability**: Automatic retries, timeout protection, transaction safety
 - **Execution Audit**: Persisted task events, attempts, workflow timelines, and handler checkpoints
 - **Database Support**: SQLite/MySQL/PostgreSQL with flexible connection options
@@ -80,7 +81,23 @@ taskManager.runRetention();
 
 console.log(workflowSummary.stage_timings);
 console.log(workflowSummary.critical_path);
+
+// Hot update a handler for future claims
+taskManager.use('sendEmail', async (task) => {
+    const { to, subject, body } = task.payload;
+    await sendEmailV2(to, subject, body);
+    return { sent: true, provider: 'v2' };
+});
+
+// Remove a handler when a flow is unloaded
+taskManager.unuse('processImage');
 ```
+
+Hot reload semantics:
+
+- A task attempt that is already executing keeps the handler version captured when it started.
+- A paused or suspended task that resumes later uses the latest registered handler.
+- Child tasks created by a running parent resolve against the live handler registry when they are created.
 
 ## Documentation
 

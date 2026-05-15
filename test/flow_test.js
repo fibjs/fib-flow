@@ -113,6 +113,57 @@ describe("Workflow Tests", () => {
         assert.equal(child1Attempts[0].attempt, 1);
         assert.equal(child1Attempts[0].outcome, 'completed');
 
+
+    it("should use the latest child handler when a running parent creates subtasks", () => {
+        let parentStarted = false;
+        let parentTaskId;
+
+        taskManager.use('dynamic_parent_task', (task, next) => {
+            if (task.stage === 0) {
+                parentStarted = true;
+                coroutine.sleep(200);
+                return next([
+                    {
+                        name: 'dynamic_child_task',
+                        payload: { source: 'parent' }
+                    }
+                ]);
+            }
+
+            return { result: 'parent_complete' };
+        });
+
+        taskManager.use('dynamic_child_task', {
+            handler: () => {
+                return { version: 'old' };
+            },
+            timeout: 5
+        });
+
+        taskManager.start();
+
+        parentTaskId = taskManager.async('dynamic_parent_task');
+        while (!parentStarted) {
+            coroutine.sleep(10);
+        }
+
+        taskManager.use('dynamic_child_task', {
+            handler: () => {
+                return { version: 'new' };
+            },
+            timeout: 15
+        });
+
+        while (taskManager.getTask(parentTaskId).status !== 'completed') {
+            coroutine.sleep(50);
+        }
+
+        const childTasks = taskManager.getChildTasks(parentTaskId);
+        assert.equal(childTasks.length, 1);
+        assert.equal(childTasks[0].status, 'completed');
+        assert.equal(childTasks[0].result.version, 'new');
+        assert.equal(childTasks[0].timeout, 15);
+    });
         const child2Attempts = taskManager.getTaskAttempts(children[1].id);
         assert.equal(child2Attempts.length, 1);
         assert.equal(child2Attempts[0].attempt, 1);

@@ -602,4 +602,64 @@ describe('Task Concurrency', () => {
         assert.ok(maxRunning <= 3, 'Should not exceed updated concurrency limit');
         assert.equal(completed, 6, 'All tasks should complete');
     });
+
+    it('should hot-swap handlers without affecting running tasks', () => {
+        let firstTaskStarted = false;
+
+        taskManager.use('hotTask', async () => {
+            firstTaskStarted = true;
+            coroutine.sleep(200);
+            return { version: 'v1' };
+        });
+
+        taskManager.start();
+
+        const firstTask = taskManager.async('hotTask', { id: 1 });
+        while (!firstTaskStarted) {
+            coroutine.sleep(10);
+        }
+
+        taskManager.use('hotTask', async () => {
+            return { version: 'v2' };
+        });
+
+        const secondTask = taskManager.async('hotTask', { id: 2 });
+
+        while (taskManager.getTask(firstTask).status !== 'completed' || taskManager.getTask(secondTask).status !== 'completed') {
+            coroutine.sleep(20);
+        }
+
+        assert.equal(taskManager.getTask(firstTask).result.version, 'v1');
+        assert.equal(taskManager.getTask(secondTask).result.version, 'v2');
+    });
+
+    it('should let running tasks finish after unuse and reject new submissions', () => {
+        let started = false;
+
+        taskManager.use('transientTask', async () => {
+            started = true;
+            coroutine.sleep(200);
+            return { completed: true };
+        });
+
+        taskManager.start();
+
+        const taskId = taskManager.async('transientTask', { id: 1 });
+        while (!started) {
+            coroutine.sleep(10);
+        }
+
+        assert.equal(taskManager.unuse('transientTask'), 1);
+        assert.equal(taskManager.unuse('transientTask'), 0);
+
+        assert.throws(() => {
+            taskManager.async('transientTask', { id: 2 });
+        }, /No handler registered for task: transientTask/);
+
+        while (taskManager.getTask(taskId).status !== 'completed') {
+            coroutine.sleep(20);
+        }
+
+        assert.equal(taskManager.getTask(taskId).result.completed, true);
+    });
 });

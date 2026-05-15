@@ -298,6 +298,42 @@ describe('Async Tasks', () => {
         assert.ok(taskAttempts[1].ended_at >= taskAttempts[1].started_at);
     });
 
+    it('should use the latest handler after a paused task is resumed', () => {
+        let executionCount = 0;
+
+        taskManager.use('resume_with_update_task', (task) => {
+            executionCount++;
+            if (executionCount === 1) {
+                taskManager.pauseTask(task.id);
+                return;
+            }
+
+            return { version: 'old' };
+        });
+
+        taskManager.start();
+
+        const taskId = taskManager.async('resume_with_update_task');
+        coroutine.sleep(500);
+
+        const pausedTask = taskManager.getTask(taskId);
+        assert.equal(pausedTask.status, 'paused');
+        assert.equal(executionCount, 1);
+
+        taskManager.use('resume_with_update_task', () => {
+            executionCount++;
+            return { version: 'new' };
+        });
+
+        taskManager.resumeTask(taskId);
+        coroutine.sleep(500);
+
+        const completedTask = taskManager.getTask(taskId);
+        assert.equal(completedTask.status, 'completed');
+        assert.equal(executionCount, 2);
+        assert.deepEqual(completedTask.result, { version: 'new' });
+    });
+
     it('should emit pause and generic resume audit events for manually resumed tasks', () => {
         let executionCount = 0;
         taskManager.use('resume_event_task', (task) => {

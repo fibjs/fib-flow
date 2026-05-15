@@ -40,7 +40,12 @@ new TaskManager(options)
 
 ### Task Registration
 
-Tasks must be registered with handlers before they can be executed. The TaskManager provides flexible handler registration through the `use()` method.
+Tasks must be registered with handlers before they can be executed. The TaskManager provides flexible handler registration through the `use()` method, and handlers can be updated or removed at runtime.
+
+Runtime semantics:
+- A task that is already executing keeps the handler version captured when that execution attempt started.
+- A paused or suspended task that resumes later is claimed again and uses the latest registered handler.
+- Child tasks created by a running parent are resolved against the live handler registry at creation time.
 
 #### Function Form Registration
 ```javascript
@@ -128,6 +133,28 @@ taskManager.use({
     }
 });
 ```
+
+#### Handler Removal
+```javascript
+/**
+ * Unregister one or more task handlers
+ * @param {string|string[]} taskName Task type identifier or identifiers
+ * @returns {number} Number of handlers removed
+ */
+unuse(taskName)
+```
+
+Example:
+```javascript
+taskManager.unuse('processImage');
+
+taskManager.unuse([
+    'processVideo',
+    'processAudio'
+]);
+```
+
+`unuse()` only affects future work selection. It does not interrupt a task attempt that is already executing.
 
 #### Handler Options
 
