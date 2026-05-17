@@ -5,6 +5,18 @@ const coroutine = require('coroutine');
 const { TaskManager } = require('..');
 const config = require('./config.js');
 
+function waitFor(predicate, timeoutMs = 5000, intervalMs = 50) {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+        if (predicate()) {
+            return true;
+        }
+        coroutine.sleep(intervalMs);
+    }
+
+    return predicate();
+}
+
 describe('Async Tasks', () => {
     let db;
     let taskManager;
@@ -281,7 +293,7 @@ describe('Async Tasks', () => {
 
         // Resume the task
         taskManager.resumeTask(taskId);
-        coroutine.sleep(500);
+        assert.ok(waitFor(() => taskManager.getTask(taskId).status === 'completed', 5000, 50));
 
         const completedTask = taskManager.getTask(taskId);
         assert.equal(completedTask.status, 'completed');
@@ -326,7 +338,7 @@ describe('Async Tasks', () => {
         });
 
         taskManager.resumeTask(taskId);
-        coroutine.sleep(500);
+        assert.ok(waitFor(() => taskManager.getTask(taskId).status === 'completed', 5000, 50));
 
         const completedTask = taskManager.getTask(taskId);
         assert.equal(completedTask.status, 'completed');

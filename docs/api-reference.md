@@ -29,7 +29,11 @@ The TaskManager is the core component responsible for managing task lifecycles, 
  * @param {number} [options.timeout=60] Default task timeout in seconds
  * @param {number} [options.max_concurrent_tasks=10] Maximum concurrent tasks
  * @param {number} [options.active_update_interval=1000] Active time update interval in milliseconds
- * @param {string} [options.worker_id] Unique identifier for this worker (auto-generated if not provided)  
+ * @param {string} [options.worker_id] Unique identifier for this worker instance (auto-generated if not provided)
+ * @param {string} [options.pod_id] Stable logical node identifier used for worker recovery and peer fencing
+ * @param {number} [options.worker_heartbeat_interval=1000] Worker registry heartbeat interval in milliseconds
+ * @param {number} [options.worker_ttl=5000] Worker liveness TTL in milliseconds
+ * @param {boolean} [options.recover_running_jobs=true] Whether startup and peer scans reclaim running jobs owned by dead or superseded workers
  * @param {number} [options.expire_time=86400] Time in seconds after which completed/failed tasks are deleted (1 day)
  * @param {Object} [options.retention] Explicit retention policy for expired terminal tasks
  * @param {number} [options.retention.expire_time] Expiration window in seconds
@@ -37,6 +41,12 @@ The TaskManager is the core component responsible for managing task lifecycles, 
  */
 new TaskManager(options)
 ```
+
+Worker recovery notes:
+- `worker_id` represents a single process instance, not a stable node identity.
+- `pod_id` groups multiple worker instances that belong to the same logical node across restarts.
+- When `pod_id` is configured, fib-flow maintains a `fib_flow_workers` registry and can reclaim `running` tasks owned by dead or superseded workers without waiting for task timeout.
+- Running-task writes are ownership-fenced by `worker_id`, so stale workers cannot safely write back after a task has been recovered.
 
 ### Task Registration
 
@@ -189,6 +199,10 @@ const taskManager = new TaskManager({
     timeout: 60,                // Default task timeout in seconds
     max_concurrent_tasks: 10,   // Maximum concurrent tasks
     active_update_interval: 1000, // Active time update interval
+    pod_id: 'scheduler-a',      // Stable logical node identity for worker recovery
+    worker_heartbeat_interval: 1000, // Worker registry heartbeat interval
+    worker_ttl: 5000,           // Worker liveness TTL in milliseconds
+    recover_running_jobs: true, // Reclaim running jobs from dead or superseded workers
     expire_time: 86400,         // Backward-compatible retention shortcut
     retention: {
         expire_time: 86400,
@@ -409,7 +423,7 @@ queryWorkflowEvents(rootId, filters)
 // Query attempts for a task
 queryTaskAttempts(taskId, {
     worker_id,
-    outcome,
+    outcome, // e.g. completed, failed, timeout, suspended, interrupted
     started_after,
     started_before,
     ended_after,
@@ -423,7 +437,7 @@ queryTaskAttempts(taskId, {
 // Query attempts for all tasks in a workflow
 queryWorkflowAttempts(rootId, {
     worker_id,
-    outcome,
+    outcome, // e.g. completed, failed, timeout, suspended, interrupted
     started_after,
     started_before,
     ended_after,

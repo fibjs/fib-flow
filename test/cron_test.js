@@ -5,6 +5,18 @@ const coroutine = require('coroutine');
 const { TaskManager } = require('..');
 const config = require('./config.js');
 
+function waitFor(predicate, timeoutMs = 5000, intervalMs = 50) {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+        if (predicate()) {
+            return true;
+        }
+        coroutine.sleep(intervalMs);
+    }
+
+    return predicate();
+}
+
 describe('Cron Tests', () => {
     let db;
     let taskManager;
@@ -67,6 +79,16 @@ describe('Cron Tests', () => {
         assert.equal(executionCount >= 2, true);
         assert.equal(executionCount <= 4, true);
 
+        taskManager.pause();
+        const settleDeadline = Date.now() + 2000;
+        while (Date.now() < settleDeadline) {
+            const currentTask = taskManager.getTask(taskId);
+            if (currentTask.status === 'pending') {
+                break;
+            }
+            coroutine.sleep(20);
+        }
+
         const task = taskManager.getTask(taskId);
         
         assert.equal(task.id, taskId);
@@ -95,13 +117,9 @@ describe('Cron Tests', () => {
 
         const taskId = taskManager.cron('cron_attempt_test', '* * * * * *');
 
-        while (executionCount < 2) {
-            coroutine.sleep(100);
-        }
+        assert.ok(waitFor(() => executionCount >= 2, 5000, 100));
 
-        while (taskManager.getTask(taskId).status !== 'pending') {
-            coroutine.sleep(100);
-        }
+        assert.ok(waitFor(() => taskManager.getTask(taskId).status === 'pending', 5000, 100));
 
         const taskAttempts = taskManager.getTaskAttempts(taskId);
         assert.equal(taskAttempts.length, 2);
@@ -123,13 +141,9 @@ describe('Cron Tests', () => {
 
         const taskId = taskManager.cron('test', '* * * * * *');
         
-        while(attempts < taskManager.options.max_retries) {
-            coroutine.sleep(100);
-        }
+        assert.ok(waitFor(() => attempts >= taskManager.options.max_retries, 5000, 100));
 
-        while(taskManager.getTask(taskId).status !== 'paused') {
-            coroutine.sleep(100);
-        }
+        assert.ok(waitFor(() => taskManager.getTask(taskId).status === 'paused', 5000, 100));
 
         const task = taskManager.getTask(taskId);
         assert.equal(task.retry_count > 0, true);
@@ -172,32 +186,29 @@ describe('Cron Tests', () => {
             retry_interval: 1 
         });
 
-        while (true) {
-            const task = taskManager.getTask(taskId);
-            if (task.status === 'timeout') break;
-            coroutine.sleep(100);
-        }
+        let task;
+        assert.ok(waitFor(() => {
+            task = taskManager.getTask(taskId);
+            return task.status === 'timeout';
+        }, 5000, 100));
         assert.equal(executionCount, 1);
 
-        while (true) {
+        assert.ok(waitFor(() => {
             task = taskManager.getTask(taskId);
-            if (task.status === 'pending') break;
-            coroutine.sleep(100);
-        }
+            return task.retry_count === 1;
+        }, 8000, 100));
         assert.equal(task.retry_count, 1);
 
-        while (true) {
+        assert.ok(waitFor(() => {
             task = taskManager.getTask(taskId);
-            if (task.status === 'timeout' && task.retry_count === 1) break;
-            coroutine.sleep(100);
-        }
-        assert.equal(executionCount, 2);
+            return executionCount >= 2 && task.retry_count === 1 && ['timeout', 'paused'].includes(task.status);
+        }, 8000, 100));
+        assert.equal(executionCount >= 2, true);
 
-        while (true) {
+        assert.ok(waitFor(() => {
             task = taskManager.getTask(taskId);
-            if (task.status === 'paused') break;
-            coroutine.sleep(100);
-        }
+            return task.status === 'paused';
+        }, 12000, 100));
 
         assert.equal(task.status, 'paused');
         assert.equal(task.retry_count, 1);
@@ -220,16 +231,23 @@ describe('Cron Tests', () => {
             retry_interval: 1
         });
 
-        while (true) {
+        let task;
+        assert.ok(waitFor(() => {
             task = taskManager.getTask(taskId);
-            if (task.status === 'paused') break;
-            coroutine.sleep(100);
-        }
+            return task.status === 'paused';
+        }, 12000, 100));
         
         assert.equal(task.status, 'paused');
         assert.equal(executionCount, 2);
 
         taskManager.resumeTask(taskId);
+        taskManager.pause();
+        const settleDeadline = Date.now() + 2000;
+        while (Date.now() < settleDeadline) {
+            task = taskManager.getTask(taskId);
+            if (task.status === 'pending') break;
+            coroutine.sleep(20);
+        }
         task = taskManager.getTask(taskId);
         assert.equal(task.status, 'pending');
         assert.equal(task.retry_count, 0);

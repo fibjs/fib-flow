@@ -1,6 +1,6 @@
 # Database Configuration
 
-This document provides comprehensive guidance on configuring database connections in fib-flow. It covers various connection methods, supported database types, and transaction management features. Whether you're using SQLite for simple deployments or MySQL for production environments, you'll find detailed information about setup options and best practices.
+This document provides comprehensive guidance on configuring database connections in fib-flow. It covers various connection methods, supported database types, and transaction management features. Whether you're using SQLite for simple deployments, MySQL for production environments, or PostgreSQL for distributed recovery scenarios, you'll find detailed information about setup options and best practices.
 
 ## Table of Contents
 - [Connection Methods](#connection-methods)
@@ -16,7 +16,7 @@ This document provides comprehensive guidance on configuring database connection
 
 ## Connection Methods
 
-fib-flow supports both SQLite and MySQL databases. You can specify the database connection in three ways:
+fib-flow supports SQLite, MySQL, and PostgreSQL databases. You can specify the database connection in three ways:
 
 ### Connection String
 ```javascript

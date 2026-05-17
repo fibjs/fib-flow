@@ -57,6 +57,12 @@ Tasks follow these state transition rules:
 
 5. Recovery Transitions
    - `paused` → `pending`: Manually resume a paused cron task
+    - `running` → `pending`: Task ownership is recovered after the owning worker becomes dead or superseded
+
+Recovery notes:
+- `running -> pending` caused by worker recovery is not treated as a normal retry-failure transition.
+- The interrupted execution round is recorded in task attempts with outcome `interrupted`.
+- The audit stream emits `task_recovered` for this recovery path.
 
 ### State Diagram
 

@@ -38,6 +38,7 @@ Each event row may contain these fields:
 | `task_completed` | `updateTaskStatus(..., 'completed')` succeeds | `running -> completed` | retry count, next run time when present |
 | `task_failed` | `updateTaskStatus(..., 'failed')` succeeds | `running -> failed` | error, retry count |
 | `task_timed_out` | A running task times out or is explicitly marked timeout | Usually `running -> timeout` | timeout reason, retry metadata |
+| `task_recovered` | A running task is reclaimed because its owner worker became unavailable | Usually `running -> pending` | recovery reason, previous worker id, recovering worker id, recovering pod id |
 | `task_retry_scheduled` | Timeout handling schedules another run | Usually `failed/timeout -> pending` | retry count, next run time |
 | `task_paused` | A cron task is paused after retry exhaustion or explicit pause transition | Usually `failed/timeout -> paused` or `running -> paused` | error, retry exhaustion flags |
 | `task_permanently_failed` | An async task exhausts retries | Usually `failed/timeout -> permanently_failed` | error, retry exhaustion flags |
@@ -67,6 +68,7 @@ Events and attempts complement each other:
 - Attempt rows capture round-level timing and final outcome.
 - `task_progress` and `task_checkpoint` can attach to an open attempt when one exists.
 - A completed or failed attempt is the authoritative source for duration and outcome analysis.
+- When a running task is reclaimed because its owner worker is dead or superseded, the open attempt is closed with outcome `interrupted` and the audit stream emits `task_recovered`.
 
 ## Snapshot Cache Fields
 

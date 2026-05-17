@@ -9,6 +9,7 @@ A powerful workflow management system built on fibjs for orchestrating complex t
 - **State Management**: Comprehensive task lifecycle and state transitions
 - **Hot Reload**: Update or remove handlers at runtime without restarting workers
 - **Reliability**: Automatic retries, timeout protection, transaction safety
+- **Worker Recovery**: Reclaim `running` jobs from dead or superseded workers through the `fib_flow_workers` registry
 - **Execution Audit**: Persisted task events, attempts, workflow timelines, and handler checkpoints
 - **Database Support**: SQLite/MySQL/PostgreSQL with flexible connection options
 - **Resource Management**: Load balancing and specialized worker support
@@ -26,7 +27,11 @@ const { TaskManager } = require('fib-flow');
 
 // Initialize task manager with an explicit backend
 const taskManager = new TaskManager({
-    dbConnection: 'sqlite::memory:'
+    dbConnection: 'sqlite::memory:',
+    pod_id: 'scheduler-a',
+    worker_heartbeat_interval: 1000,
+    worker_ttl: 5000,
+    recover_running_jobs: true
 });
 taskManager.db.setup();
 
@@ -99,6 +104,14 @@ Hot reload semantics:
 - A paused or suspended task that resumes later uses the latest registered handler.
 - Child tasks created by a running parent resolve against the live handler registry when they are created.
 
+Worker recovery semantics:
+
+- `worker_id` identifies a single running process instance.
+- `pod_id` identifies a stable logical node across restarts.
+- When `pod_id` is configured, fib-flow records worker liveness in `fib_flow_workers`.
+- If a worker becomes dead or is superseded by a newer worker from the same `pod_id`, its `running` tasks can be reclaimed without waiting for task timeout.
+- Running-task updates are ownership-fenced by `worker_id`, so stale workers cannot safely write back after recovery.
+
 ## Documentation
 
 ### Core Concepts
@@ -110,6 +123,7 @@ Hot reload semantics:
 ### Configuration & Setup
 - [Installation Guide](docs/installation.md)
 - [Database Configuration](docs/database-config.md)
+- [Worker Recovery Design](docs/worker-recovery-design.md)
 - [Task Handler System](docs/task-handler.md)
 
 ### Reference

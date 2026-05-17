@@ -809,7 +809,7 @@ describe("Workflow Tests", () => {
             const waitDeadline = Date.now() + 3000;
             while (Date.now() < waitDeadline) {
                 const candidate = taskManager.getTask(lastParentTaskId);
-                if (candidate && candidate.status !== 'suspended' && candidate.status !== 'running') {
+                if (candidate && candidate.status === 'pending') {
                     break;
                 }
                 coroutine.sleep(100);
@@ -836,6 +836,7 @@ describe("Workflow Tests", () => {
         // Verify the status of the last executed parent task
         if (lastParentTaskId && lastParentTask) {
             // Since this is an execution instance created by cron task, its status should be 'pending' instead of 'completed'
+            assert.equal(lastParentTask.status, 'pending', `Expected latest cron parent execution to settle to pending, got ${lastParentTask.status}`);
             assert.equal(lastParentTask.status, 'pending');
             // Verify execution results can still be obtained through the result field
             assert.equal(lastParentTask.result.result, 'cron_parent_completed');
@@ -972,7 +973,7 @@ describe("Workflow Tests", () => {
             const waitDeadline = Date.now() + 3000;
             while (Date.now() < waitDeadline) {
                 const candidate = taskManager.getTask(lastParentTaskId);
-                if (candidate && candidate.status !== 'suspended' && candidate.status !== 'running') {
+                if (candidate && candidate.status === 'pending') {
                     break;
                 }
                 coroutine.sleep(100);
@@ -999,6 +1000,7 @@ describe("Workflow Tests", () => {
         // Verify the status of the last executed parent task
         if (lastParentTaskId && lastParentTask) {
             // The execution instance created by cron task should have status 'pending'
+            assert.equal(lastParentTask.status, 'pending', `Expected latest cron parent execution to settle to pending, got ${lastParentTask.status}`);
             assert.equal(lastParentTask.status, 'pending');
             
             // Verify execution results contain child task failure information
