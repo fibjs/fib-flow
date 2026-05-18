@@ -548,6 +548,49 @@ describe("TaskManager DB Connection", () => {
                 assert.ok(cronEvents.some(event => event.event_type === 'task_paused'));
             });
 
+            it("should repair parent state for already permanently failed child tasks", () => {
+                const parentTaskId = adapter.insertTask({
+                    name: "timeout_parent_repair",
+                    type: "async"
+                });
+
+                adapter.claimTask(["timeout_parent_repair"], "parent-worker");
+
+                const childTaskId = adapter.insertTask({
+                    name: "timeout_child_repair",
+                    type: "async",
+                    max_retries: 1
+                }, {
+                    root_id: parentTaskId,
+                    parent_id: parentTaskId
+                });
+
+                adapter.claimTask(["timeout_child_repair"], "child-worker");
+                adapter.updateTaskStatus(childTaskId, "failed", { error: "repair me" });
+
+                directUpdateTaskProperty(adapter, childTaskId, 'status', 'permanently_failed');
+                directUpdateTaskProperty(adapter, parentTaskId, 'completed_children', 0);
+                directUpdateTaskProperty(adapter, parentTaskId, 'result', null);
+
+                const firstResult = adapter.handleTimeoutTasks(1000);
+                assert.equal(firstResult.permanently_failed, 0);
+
+                let parentTask = adapter.getTask(parentTaskId);
+                assert.equal(parentTask.status, 'pending');
+                assert.equal(parentTask.completed_children, 1);
+                assert.ok(Array.isArray(parentTask.result));
+                assert.equal(parentTask.result.length, 1);
+                assert.equal(parentTask.result[0].task_id, childTaskId);
+                assert.equal(parentTask.result[0].error, 'repair me');
+
+                const secondResult = adapter.handleTimeoutTasks(1000);
+                assert.equal(secondResult.permanently_failed, 0);
+
+                parentTask = adapter.getTask(parentTaskId);
+                assert.equal(parentTask.completed_children, 1);
+                assert.equal(parentTask.result.length, 1);
+            });
+
             it("should delete expired completed and failed tasks", () => {
                 const now = Math.floor(Date.now() / 1000);
 

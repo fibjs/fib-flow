@@ -52,6 +52,8 @@ describe('TaskManager Initialization', () => {
         assert.equal(taskManager.options.retry_interval, 0, 'Default retry_interval should be 0');
         assert.equal(taskManager.options.max_concurrent_tasks, 10, 'Default max_concurrent_tasks should be 10');
         assert.equal(taskManager.options.active_update_interval, 1000, 'Default active_update_interval should be 1000');
+        assert.equal(taskManager.options.worker_heartbeat_interval, 5000, 'Default worker_heartbeat_interval should be 5000');
+        assert.equal(taskManager.options.worker_ttl, 30000, 'Default worker_ttl should be 30000');
         
         // Verify worker_id is generated
         assert.ok(taskManager.options.worker_id, 'Worker ID should be generated');

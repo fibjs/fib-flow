@@ -39,8 +39,8 @@ const taskManager = new TaskManager({
     timeout: 60,                  // Default task timeout in seconds
   max_concurrent_tasks: 10,     // Maximum concurrent tasks
   pod_id: 'scheduler-a',        // Stable logical node identity for recovery
-  worker_heartbeat_interval: 1000, // Worker registry heartbeat interval in milliseconds
-  worker_ttl: 5000,             // Worker liveness TTL in milliseconds
+  worker_heartbeat_interval: 5000, // Worker registry heartbeat interval in milliseconds
+  worker_ttl: 30000,            // Worker liveness TTL in milliseconds
   recover_running_jobs: true    // Reclaim running jobs from dead workers
 });
 

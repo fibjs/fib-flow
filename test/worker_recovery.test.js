@@ -374,6 +374,51 @@ describe('Worker Recovery', () => {
             assert.equal(recoveryEvents[0].metadata.recovered_by_worker_id, 'worker-peer');
         });
 
+        it('should re-register the current worker after a transient eviction and continue processing', () => {
+            let handledCount = 0;
+
+            const taskManager = new TaskManager({
+                dbConnection: testDb.connection,
+                pod_id: 'pod-self-heal',
+                worker_id: 'worker-self-heal',
+                worker_heartbeat_interval: 50,
+                worker_ttl: 1000,
+                poll_interval: 20
+            });
+            taskManagers.push(taskManager);
+            taskManager.db.setup();
+            taskManager.use('self_heal_task', () => {
+                handledCount += 1;
+                return { handled: true };
+            });
+            taskManager.start();
+
+            assert.ok(waitFor(() => {
+                const worker = bootstrapAdapter.getWorker('worker-self-heal');
+                return worker && worker.status === 'active';
+            }, 3000));
+
+            bootstrapAdapter.markWorkerDead('worker-self-heal', Math.floor(Date.now() / 1000));
+
+            assert.ok(waitFor(() => {
+                const worker = bootstrapAdapter.getWorker('worker-self-heal');
+                return worker && worker.status === 'active';
+            }, 3000));
+
+            const taskId = taskManager.async('self_heal_task');
+            assert.ok(waitFor(() => {
+                const task = bootstrapAdapter.getTask(taskId);
+                return task && task.status === 'completed';
+            }, 3000));
+
+            const worker = bootstrapAdapter.getWorker('worker-self-heal');
+            const task = bootstrapAdapter.getTask(taskId);
+
+            assert.equal(worker.status, 'active');
+            assert.equal(task.worker_id, 'worker-self-heal');
+            assert.equal(handledCount, 1);
+        });
+
         it('should leave superseded running tasks untouched when startup recovery is disabled', () => {
             let resumedRuns = 0;
 

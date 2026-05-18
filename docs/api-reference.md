@@ -31,8 +31,8 @@ The TaskManager is the core component responsible for managing task lifecycles, 
  * @param {number} [options.active_update_interval=1000] Active time update interval in milliseconds
  * @param {string} [options.worker_id] Unique identifier for this worker instance (auto-generated if not provided)
  * @param {string} [options.pod_id] Stable logical node identifier used for worker recovery and peer fencing
- * @param {number} [options.worker_heartbeat_interval=1000] Worker registry heartbeat interval in milliseconds
- * @param {number} [options.worker_ttl=5000] Worker liveness TTL in milliseconds
+ * @param {number} [options.worker_heartbeat_interval=5000] Worker registry heartbeat interval in milliseconds
+ * @param {number} [options.worker_ttl=30000] Worker liveness TTL in milliseconds
  * @param {boolean} [options.recover_running_jobs=true] Whether startup and peer scans reclaim running jobs owned by dead or superseded workers
  * @param {number} [options.expire_time=86400] Time in seconds after which completed/failed tasks are deleted (1 day)
  * @param {Object} [options.retention] Explicit retention policy for expired terminal tasks
@@ -200,8 +200,8 @@ const taskManager = new TaskManager({
     max_concurrent_tasks: 10,   // Maximum concurrent tasks
     active_update_interval: 1000, // Active time update interval
     pod_id: 'scheduler-a',      // Stable logical node identity for worker recovery
-    worker_heartbeat_interval: 1000, // Worker registry heartbeat interval
-    worker_ttl: 5000,           // Worker liveness TTL in milliseconds
+    worker_heartbeat_interval: 5000, // Worker registry heartbeat interval
+    worker_ttl: 30000,          // Worker liveness TTL in milliseconds
     recover_running_jobs: true, // Reclaim running jobs from dead or superseded workers
     expire_time: 86400,         // Backward-compatible retention shortcut
     retention: {
