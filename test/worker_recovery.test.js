@@ -271,7 +271,7 @@ describe('Worker Recovery', () => {
                 pod_id: 'pod-stop',
                 worker_id: 'worker-stop',
                 worker_heartbeat_interval: 50,
-                worker_ttl: 1000,
+                worker_heartbeat_timeout: 1000,
                 poll_interval: 20
             });
             taskManagers.push(taskManager);
@@ -310,7 +310,7 @@ describe('Worker Recovery', () => {
                 pod_id: 'pod-a',
                 worker_id: 'worker-new',
                 worker_heartbeat_interval: 50,
-                worker_ttl: 1000,
+                worker_heartbeat_timeout: 1000,
                 poll_interval: 20
             });
             taskManagers.push(taskManager);
@@ -354,7 +354,7 @@ describe('Worker Recovery', () => {
                 pod_id: 'pod-peer',
                 worker_id: 'worker-peer',
                 worker_heartbeat_interval: 50,
-                worker_ttl: 1000,
+                worker_heartbeat_timeout: 1000,
                 poll_interval: 20
             });
             taskManagers.push(taskManager);
@@ -382,7 +382,7 @@ describe('Worker Recovery', () => {
                 pod_id: 'pod-self-heal',
                 worker_id: 'worker-self-heal',
                 worker_heartbeat_interval: 50,
-                worker_ttl: 1000,
+                worker_heartbeat_timeout: 1000,
                 poll_interval: 20
             });
             taskManagers.push(taskManager);
@@ -441,7 +441,7 @@ describe('Worker Recovery', () => {
                 pod_id: 'pod-disabled-startup',
                 worker_id: 'worker-new',
                 worker_heartbeat_interval: 50,
-                worker_ttl: 1000,
+                worker_heartbeat_timeout: 1000,
                 recover_running_jobs: false,
                 poll_interval: 20
             });
@@ -490,7 +490,7 @@ describe('Worker Recovery', () => {
                 pod_id: 'pod-disabled-peer-live',
                 worker_id: 'worker-peer',
                 worker_heartbeat_interval: 50,
-                worker_ttl: 1000,
+                worker_heartbeat_timeout: 1000,
                 recover_running_jobs: false,
                 poll_interval: 20
             });
@@ -525,7 +525,7 @@ describe('Worker Recovery', () => {
                 pod_id: 'pod-race',
                 worker_id: 'worker-old',
                 worker_heartbeat_interval: 50,
-                worker_ttl: 1000,
+                worker_heartbeat_timeout: 1000,
                 poll_interval: 20
             });
             taskManagers.push(oldManager);
@@ -546,7 +546,7 @@ describe('Worker Recovery', () => {
                 pod_id: 'pod-race',
                 worker_id: 'worker-new',
                 worker_heartbeat_interval: 50,
-                worker_ttl: 1000,
+                worker_heartbeat_timeout: 1000,
                 poll_interval: 20
             });
             taskManagers.push(newManager);
@@ -590,7 +590,7 @@ describe('Worker Recovery', () => {
                 pod_id: 'pod-claim-race',
                 worker_id: 'worker-old',
                 worker_heartbeat_interval: 50,
-                worker_ttl: 1000,
+                worker_heartbeat_timeout: 1000,
                 poll_interval: 20
             });
             taskManagers.push(oldManager);
@@ -606,7 +606,7 @@ describe('Worker Recovery', () => {
                 pod_id: 'pod-claim-race',
                 worker_id: 'worker-new',
                 worker_heartbeat_interval: 50,
-                worker_ttl: 1000,
+                worker_heartbeat_timeout: 1000,
                 poll_interval: 20
             });
             taskManagers.push(newManager);
@@ -645,8 +645,8 @@ describe('Worker Recovery', () => {
                 pod_id: 'pod-live',
                 worker_id: 'worker-live',
                 worker_heartbeat_interval: 50,
-                worker_ttl: 150,
-                active_update_interval: 1000,
+                worker_heartbeat_timeout: 150,
+                task_heartbeat_interval: 1000,
                 poll_interval: 20
             });
             taskManagers.push(oldManager);
@@ -670,8 +670,8 @@ describe('Worker Recovery', () => {
                 pod_id: 'pod-peer-live',
                 worker_id: 'worker-peer-live',
                 worker_heartbeat_interval: 50,
-                worker_ttl: 1000,
-                active_update_interval: 1000,
+                worker_heartbeat_timeout: 1000,
+                task_heartbeat_interval: 1000,
                 poll_interval: 20
             });
             taskManagers.push(peerManager);

@@ -7,6 +7,11 @@ const { createAdapter, TaskManager } = require('..');
 const Pool = require('fib-pool');
 const config = require('./config.js');
 
+const TEST_TIMEOUT_CONFIG = {
+    task_heartbeat_interval: 1000,
+    task_heartbeat_timeout: 5000
+};
+
 function createDBConn() {
     if (typeof config.dbConnection === 'string') {
         return db.open(config.dbConnection);
@@ -213,7 +218,7 @@ describe("TaskManager DB Connection", () => {
                 adapter.claimTask(["audit_retry_start_test"], "worker-1");
                 adapter.updateTaskStatus(taskId, "failed", { error: "first failure" });
                 coroutine.sleep(1000);
-                adapter.handleTimeoutTasks(1000);
+                adapter.handleTimeoutTasks(TEST_TIMEOUT_CONFIG);
                 adapter.claimTask(["audit_retry_start_test"], "worker-2");
 
                 const events = adapter.getTaskEvents(taskId);
@@ -414,19 +419,19 @@ describe("TaskManager DB Connection", () => {
                 directUpdateTaskProperty(adapter, taskId, 'last_active_time', now - 300); // 5 minutes ago
 
                 // First call to handleTimeoutTasks - should mark task as timeout
-                adapter.handleTimeoutTasks(1000);
+                adapter.handleTimeoutTasks(TEST_TIMEOUT_CONFIG);
 
                 // Verify task is marked as timeout first
                 let updatedTask = adapter.getTask(taskId);
                 assert.equal(updatedTask.status, "timeout");
-                assert.ok(updatedTask.error.includes("Task heartbeat lost"));
+                assert.ok(updatedTask.error.includes("Task heartbeat timed out"));
                 let events = adapter.getTaskEvents(taskId);
                 assert.ok(events.some(event => event.event_type === 'task_timed_out' && event.metadata.timeout_type === 'heartbeat'));
 
                 coroutine.sleep(1000); // Wait for a second
 
                 // Second call to handleTimeoutTasks - should trigger retry
-                adapter.handleTimeoutTasks(1000);
+                adapter.handleTimeoutTasks(TEST_TIMEOUT_CONFIG);
 
                 // Now verify task becomes pending with incremented retry count
                 updatedTask = adapter.getTask(taskId);
@@ -487,7 +492,7 @@ describe("TaskManager DB Connection", () => {
                 directUpdateTaskProperty(adapter, cronTaskId, 'retry_count', 1);
 
                 // First call to handleTimeoutTasks - should mark tasks as timeout
-                adapter.handleTimeoutTasks(1000); // 1 second active update interval
+                adapter.handleTimeoutTasks(TEST_TIMEOUT_CONFIG);
 
                 // Verify total timeout task is marked as timeout
                 let task = adapter.getTask(totalTimeoutTaskId);
@@ -497,7 +502,7 @@ describe("TaskManager DB Connection", () => {
                 // Verify heartbeat timeout task is marked as timeout
                 task = adapter.getTask(heartbeatTimeoutTaskId);
                 assert.equal(task.status, "timeout");
-                assert.ok(task.error.includes("Task heartbeat lost"));
+                assert.ok(task.error.includes("Task heartbeat timed out"));
 
                 // Verify retry task is marked as timeout first
                 task = adapter.getTask(retryTaskId);
@@ -506,7 +511,7 @@ describe("TaskManager DB Connection", () => {
                 coroutine.sleep(1000); // Wait for a second
 
                 // Second call to handleTimeoutTasks - should trigger retries
-                adapter.handleTimeoutTasks(1000);
+                adapter.handleTimeoutTasks(TEST_TIMEOUT_CONFIG);
 
                 // Verify tasks are now pending with incremented retry count
                 task = adapter.getTask(totalTimeoutTaskId);
@@ -533,7 +538,7 @@ describe("TaskManager DB Connection", () => {
                 coroutine.sleep(1200);
 
                 // Third call to handleTimeoutTasks - should handle retry exhaustion
-                adapter.handleTimeoutTasks(1000);
+                adapter.handleTimeoutTasks(TEST_TIMEOUT_CONFIG);
 
                 // Verify retry task final state (should be permanently failed)
                 task = adapter.getTask(retryTaskId);
@@ -572,7 +577,7 @@ describe("TaskManager DB Connection", () => {
                 directUpdateTaskProperty(adapter, parentTaskId, 'completed_children', 0);
                 directUpdateTaskProperty(adapter, parentTaskId, 'result', null);
 
-                const firstResult = adapter.handleTimeoutTasks(1000);
+                const firstResult = adapter.handleTimeoutTasks(TEST_TIMEOUT_CONFIG);
                 assert.equal(firstResult.permanently_failed, 0);
 
                 let parentTask = adapter.getTask(parentTaskId);
@@ -583,7 +588,7 @@ describe("TaskManager DB Connection", () => {
                 assert.equal(parentTask.result[0].task_id, childTaskId);
                 assert.equal(parentTask.result[0].error, 'repair me');
 
-                const secondResult = adapter.handleTimeoutTasks(1000);
+                const secondResult = adapter.handleTimeoutTasks(TEST_TIMEOUT_CONFIG);
                 assert.equal(secondResult.permanently_failed, 0);
 
                 parentTask = adapter.getTask(parentTaskId);
@@ -617,7 +622,7 @@ describe("TaskManager DB Connection", () => {
                 directUpdateTaskProperty(adapter, failedTaskId, 'last_active_time', now - 3600);
 
                 // Call handleTimeoutTasks with 30 minute expiry
-                adapter.handleTimeoutTasks(1000, 1800); // 30 minutes
+                adapter.handleTimeoutTasks(TEST_TIMEOUT_CONFIG, 1800); // 30 minutes
 
                 // Verify tasks were deleted
                 assert.equal(adapter.getTask(completedTaskId), null);
@@ -639,7 +644,7 @@ describe("TaskManager DB Connection", () => {
                 directUpdateTaskProperty(adapter, activeCompletedId, 'last_active_time', now - 900); // 15 minutes ago
 
                 // Verify recent tasks not deleted
-                adapter.handleTimeoutTasks(1000, 1800);
+                adapter.handleTimeoutTasks(TEST_TIMEOUT_CONFIG, 1800);
                 const retrievedTask = adapter.getTask(activeCompletedId);
                 assert.ok(retrievedTask);
                 assert.equal(retrievedTask.status, 'completed');

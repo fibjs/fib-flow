@@ -30,7 +30,7 @@ const taskManager = new TaskManager({
     dbConnection: 'sqlite::memory:',
     pod_id: 'scheduler-a',
     worker_heartbeat_interval: 1000,
-    worker_ttl: 5000,
+    worker_heartbeat_timeout: 5000,
     recover_running_jobs: true
 });
 taskManager.db.setup();

@@ -260,7 +260,10 @@ const taskManager = new TaskManager({
     
     // Worker configuration
     max_concurrent_tasks: 10,
-    active_update_interval: 1000,
+    task_heartbeat_interval: 5000,
+    task_heartbeat_timeout: 30000,
+    worker_heartbeat_interval: 5000,
+    worker_heartbeat_timeout: 30000,
     worker_id: 'worker-123'  // Optional custom worker ID
 });
 ```

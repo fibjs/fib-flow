@@ -26,6 +26,7 @@ describe('Async Tasks', () => {
             dbConnection: config.dbConnection,
             poll_interval: 100,
             max_retries: 2,
+            task_heartbeat_interval: 1000,
             max_concurrent_tasks: 3
         });
 
