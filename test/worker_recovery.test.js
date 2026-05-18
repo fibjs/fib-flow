@@ -709,5 +709,78 @@ describe('Worker Recovery', () => {
             assert.equal(attempts[0].worker_id, 'worker-live');
             assert.equal(attempts[0].outcome, 'completed');
         });
+
+        it('should revive a fenced worker after the competing peer silently expires', () => {
+            let revivedClaims = 0;
+
+            const oldManager = new TaskManager({
+                dbConnection: testDb.connection,
+                pod_id: 'pod-revive-after-peer-expiry',
+                worker_id: 'worker-old',
+                worker_heartbeat_interval: 50,
+                worker_heartbeat_timeout: 150,
+                poll_interval: 20
+            });
+            taskManagers.push(oldManager);
+            oldManager.db.setup();
+            oldManager.use('revive_after_peer_expiry', () => {
+                revivedClaims += 1;
+                return { owner: 'worker-old' };
+            });
+            oldManager.start();
+
+            assert.ok(waitFor(() => {
+                const worker = bootstrapAdapter.getWorker('worker-old');
+                return worker && worker.status === 'active';
+            }, 3000));
+
+            const peerManager = new TaskManager({
+                dbConnection: testDb.connection,
+                pod_id: 'pod-revive-after-peer-expiry',
+                worker_id: 'worker-peer',
+                worker_heartbeat_interval: 50,
+                worker_heartbeat_timeout: 150,
+                poll_interval: 20
+            });
+            taskManagers.push(peerManager);
+            peerManager.db.setup();
+            peerManager.use('revive_after_peer_expiry', () => ({ owner: 'worker-peer' }));
+            peerManager.start();
+
+            assert.ok(waitFor(() => {
+                const oldWorker = bootstrapAdapter.getWorker('worker-old');
+                const peerWorker = bootstrapAdapter.getWorker('worker-peer');
+                return oldWorker && peerWorker
+                    && oldWorker.status === 'superseded'
+                    && peerWorker.status === 'active';
+            }, 3000));
+
+            peerManager.pause();
+            clearInterval(peerManager.workerTimer);
+            peerManager.workerTimer = null;
+
+            assert.ok(waitFor(() => {
+                const peerWorker = bootstrapAdapter.getWorker('worker-peer');
+                return peerWorker && peerWorker.expires_at <= Math.floor(Date.now() / 1000);
+            }, 3000));
+
+            const taskId = bootstrapAdapter.insertTask({
+                name: 'revive_after_peer_expiry',
+                type: 'async'
+            });
+
+            assert.ok(waitFor(() => {
+                const oldWorker = bootstrapAdapter.getWorker('worker-old');
+                const peerWorker = bootstrapAdapter.getWorker('worker-peer');
+                const task = bootstrapAdapter.getTask(taskId);
+                return oldWorker && peerWorker && task
+                    && oldWorker.status === 'active'
+                    && peerWorker.status === 'dead'
+                    && task.status === 'completed'
+                    && task.worker_id === 'worker-old';
+            }, 3000));
+
+            assert.equal(revivedClaims, 1);
+        });
     });
 });
