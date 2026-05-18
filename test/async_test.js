@@ -63,6 +63,38 @@ describe('Async Tasks', () => {
         assert.deepEqual(task.result, { success: true });
     });
 
+    it('should recover from a transient claimTask failure in the processing loop', () => {
+        let taskExecuted = false;
+        let shouldFailClaim = true;
+        const originalClaimTask = taskManager.db.claimTask.bind(taskManager.db);
+
+        taskManager.db.claimTask = function (...args) {
+            if (shouldFailClaim) {
+                shouldFailClaim = false;
+                throw new Error('temporary claimTask failure');
+            }
+
+            return originalClaimTask(...args);
+        };
+
+        taskManager.use('claim_retry_task', () => {
+            taskExecuted = true;
+            return { success: true };
+        });
+
+        taskManager.start();
+
+        const taskId = taskManager.async('claim_retry_task');
+        assert.ok(waitFor(() => {
+            const task = taskManager.getTask(taskId);
+            return taskExecuted && task && task.status === 'completed';
+        }, 5000));
+
+        const task = taskManager.getTask(taskId);
+        assert.equal(task.status, 'completed');
+        assert.deepEqual(task.result, { success: true });
+    });
+
     it('should handle async task failure and retries', () => {
         let attempts = 0;
 
