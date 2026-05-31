@@ -23,7 +23,7 @@ Task handlers can be registered in two forms:
 2. **Object Form** - Handler with configuration
    - Provides task-type specific defaults
    - Overrides global configuration
-   - Supports advanced task control
+    - Supports advanced task control
 
 Example:
 ```javascript
@@ -61,6 +61,7 @@ Notes:
 - Options can be overridden per task instance
 - Function form handlers use global TaskManager defaults
 - Invalid handler registration will throw an error
+- Schema metadata is not supported; handlers must validate payloads themselves if needed
 
 ### Hot Reload Semantics
 

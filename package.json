@@ -1,6 +1,6 @@
 {
   "name": "fib-flow",
-  "version": "5.1.2",
+  "version": "6.0.0",
   "description": "A robust workflow management system for fibjs with task orchestration, state management, and distributed execution capabilities",
   "main": "lib/index.js",
   "scripts": {
@@ -8,10 +8,8 @@
     "typecheck": "fibjs --check"
   },
   "dependencies": {
-    "fib-pool": "^1.6.0",
     "cron-parser": "^4.9.0",
-    "ajv": "^8.17.1",
-    "ajv-formats": "^3.0.1"
+    "fib-pool": "^1.6.0"
   },
   "keywords": [
     "fibjs",

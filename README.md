@@ -38,6 +38,9 @@ taskManager.db.setup();
 // Basic task handler
 taskManager.use('sendEmail', async (task) => {
     const { to, subject, body } = task.payload;
+    if (typeof to !== 'string' || typeof subject !== 'string' || typeof body !== 'string') {
+        throw new Error('Invalid email payload');
+    }
     task.audit('payload_validated', {
         message: 'Email payload validated',
         metadata: { recipient: to }

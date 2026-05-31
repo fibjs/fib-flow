@@ -186,6 +186,7 @@ Notes:
 - Handler options take precedence over global TaskManager options
 - If a handler is registered as a function, it will use the global TaskManager options
 - When max_concurrent_tasks is set, the system will ensure no more than that many tasks of this type run simultaneously
+- Handler schema metadata is not supported; validate payloads inside the handler when needed
 
 ### Task Options
 
