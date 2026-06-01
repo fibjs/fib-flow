@@ -171,6 +171,57 @@ describe('TaskManager Initialization', () => {
 
         taskManager.stop();
     });
+
+    it('should not run automatic retention immediately on startup by default', () => {
+        const taskManager = new TaskManager({
+            dbConnection: TEST_DB_CONNECTION,
+            task_heartbeat_interval: 25,
+            retention: {
+                expire_time: 1800,
+                statuses: ['completed']
+            }
+        });
+        taskManager.db.setup();
+        taskManager.use('retentionTask', task => ({ success: true }));
+
+        const taskId = taskManager.async('retentionTask', { data: 'cleanup' });
+        taskManager.start();
+        coroutine.sleep(150);
+
+        const now = Math.floor(Date.now() / 1000);
+        directUpdateTaskProperty(taskManager, taskId, 'last_active_time', now - 3600);
+
+        coroutine.sleep(150);
+        assert.ok(taskManager.getTask(taskId), 'Automatic retention should not run on startup by default');
+
+        taskManager.stop();
+    });
+
+    it('should run automatic retention after the configured interval', () => {
+        const taskManager = new TaskManager({
+            dbConnection: TEST_DB_CONNECTION,
+            task_heartbeat_interval: 25,
+            retention: {
+                expire_time: 1800,
+                statuses: ['completed']
+            }
+        });
+        taskManager.db.setup();
+        taskManager.use('retentionTask', task => ({ success: true }));
+
+        const taskId = taskManager.async('retentionTask', { data: 'cleanup' });
+        taskManager.start();
+        coroutine.sleep(150);
+
+        const now = Math.floor(Date.now() / 1000);
+        directUpdateTaskProperty(taskManager, taskId, 'last_active_time', now - 3600);
+
+        taskManager.nextRetentionSweepAt = Date.now();
+        coroutine.sleep(150);
+        assert.equal(taskManager.getTask(taskId), null);
+
+        taskManager.stop();
+    });
 });
 
 describe('Task Tags', () => {

@@ -682,6 +682,66 @@ describe("TaskManager DB Connection", () => {
                 assert.equal(adapter.getTask(pausedTaskId), null);
             });
 
+            it("should clean expired tasks in small batches while draining explicit retention", () => {
+                const now = Math.floor(Date.now() / 1000);
+                const taskIds = [];
+
+                for (let index = 0; index < 101; index += 1) {
+                    const taskName = `retention_batch_${index}`;
+                    const taskId = adapter.insertTask({
+                        name: taskName,
+                        type: 'async'
+                    });
+                    adapter.claimTask([taskName], 'retention-worker');
+                    adapter.updateTaskStatus(taskId, 'completed');
+                    directUpdateTaskProperty(adapter, taskId, 'last_active_time', now - (3600 + index));
+                    taskIds.push(taskId);
+                }
+
+                const cleanupResult = adapter.cleanupExpiredTasks({
+                    expire_time: 1800,
+                    statuses: ['completed'],
+                    now
+                });
+
+                assert.equal(cleanupResult.tasks_deleted, 101);
+                taskIds.forEach(taskId => {
+                    assert.equal(adapter.getTask(taskId), null);
+                });
+            });
+
+            it("should limit automatic retention cleanup to one batch per sweep", () => {
+                const now = Math.floor(Date.now() / 1000);
+                const taskIds = [];
+
+                for (let index = 0; index < 101; index += 1) {
+                    const taskName = `retention_auto_batch_${index}`;
+                    const taskId = adapter.insertTask({
+                        name: taskName,
+                        type: 'async'
+                    });
+                    adapter.claimTask([taskName], 'retention-worker');
+                    adapter.updateTaskStatus(taskId, 'completed');
+                    directUpdateTaskProperty(adapter, taskId, 'last_active_time', now - (3600 + index));
+                    taskIds.push(taskId);
+                }
+
+                const firstSweep = adapter.handleTimeoutTasks(TEST_TIMEOUT_CONFIG, {
+                    expire_time: 1800,
+                    statuses: ['completed'],
+                    now
+                });
+                assert.equal(firstSweep.tasks_deleted, 100);
+                assert.equal(taskIds.filter(taskId => adapter.getTask(taskId)).length, 1);
+
+                const secondSweep = adapter.handleTimeoutTasks(TEST_TIMEOUT_CONFIG, {
+                    expire_time: 1800,
+                    statuses: ['completed'],
+                    now
+                });
+                assert.equal(secondSweep.tasks_deleted, 1);
+            });
+
             it("should keep audit queries consistent after retention deletes workflow rows", () => {
                 const now = Math.floor(Date.now() / 1000);
 

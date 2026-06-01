@@ -86,6 +86,8 @@ This preserves the invariant that retention cleanup should not leave orphaned au
 
 Automatic cleanup happens inside the TaskManager maintenance loop.
 
+The runtime now skips the startup tick for automatic cleanup and deletes expired rows in bounded internal batches. This reduces lock duration on busy databases and avoids a cold-start sweep when a worker first comes up.
+
 Manual cleanup is also available:
 
 ```javascript
