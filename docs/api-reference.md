@@ -548,7 +548,7 @@ Checkpoint events are written as `task_checkpoint` audit events and automaticall
 
 Naming conventions:
 
-- `checkpoint.code` should use lowercase `snake_case`, for example `payload_validated` or `remote_call_started`.
+- `checkpoint.code` must be a non-empty string. Lowercase `snake_case` such as `payload_validated` or `remote_call_started` is recommended for consistency, but not required.
 - `message` is optional, but when provided it should be display text rather than another identifier.
 - `metadata` should remain structured and machine-readable.
 
@@ -580,7 +580,7 @@ These snapshot fields are convenience cache only. Platform replay, audit diagnos
 
 Progress conventions:
 
-- `stage_name` should use lowercase `snake_case`, for example `download_phase` or `waiting_children`.
+- `stage_name` must be a non-empty string. Lowercase `snake_case` such as `download_phase` or `waiting_children` is recommended for consistency, but not required.
 - `progress_text` should be short user-facing text.
 - `progress_percent` should describe coarse operator-visible progress, not sub-second execution precision.
 

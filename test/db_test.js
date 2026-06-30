@@ -789,17 +789,27 @@ describe("TaskManager DB Connection", () => {
                     type: 'async'
                 });
 
-                assert.throws(() => {
-                    adapter.recordTaskCheckpoint(taskId, { code: 'Bad Code' });
-                }, /snake_case/);
+                const checkpointId = adapter.recordTaskCheckpoint(taskId, { code: '  Bad Code  ' });
+                const progressId = adapter.recordTaskProgress(taskId, { stage_name: '  Bad Stage  ' });
 
-                assert.throws(() => {
-                    adapter.recordTaskProgress(taskId, { stage_name: 'Bad Stage' });
-                }, /snake_case/);
+                assert.ok(checkpointId > 0);
+                assert.ok(progressId > 0);
 
                 assert.throws(() => {
                     adapter.recordTaskProgress(taskId, { progress_text: '   ' });
                 }, /must not be empty/);
+
+                const checkpointEvents = adapter.getTaskEvents(taskId, {
+                    event_type: 'task_checkpoint',
+                    order: 'asc'
+                });
+                const progressEvents = adapter.getTaskEvents(taskId, {
+                    event_type: 'task_progress',
+                    order: 'asc'
+                });
+
+                assert.equal(checkpointEvents[0].metadata.code, 'Bad Code');
+                assert.equal(progressEvents[0].metadata.stage_name, 'Bad Stage');
             });
         });
 

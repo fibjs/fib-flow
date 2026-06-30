@@ -111,7 +111,8 @@ export interface TaskAttemptRecord {
 
 export interface TaskAuditCheckpoint {
     /**
-     * Runtime expects lowercase snake_case, for example payload_validated.
+    * Runtime accepts any non-empty string. Lowercase snake_case such as
+    * payload_validated is recommended for consistency.
      */
     code: TaskAuditCode;
     message?: string;
@@ -120,7 +121,8 @@ export interface TaskAuditCheckpoint {
 
 export interface TaskProgressSnapshot {
     /**
-     * Runtime expects lowercase snake_case, for example download_phase.
+    * Runtime accepts any non-empty string. Lowercase snake_case such as
+    * download_phase is recommended for consistency.
      */
     stage_name?: TaskStageName;
     progress_text?: string;

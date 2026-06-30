@@ -259,21 +259,21 @@ describe('Async Tasks', () => {
                 message: '  Payload validated  ',
                 metadata: { step: 1 }
             });
+            const flexibleCheckpointId = task.audit('  Invalid Code  ', {
+                message: '  Mixed case is allowed  '
+            });
             const progressId = task.progress('  Downloading input  ', {
                 stage_name: '  download_phase  ',
                 message: '  downloading  '
             });
+            const flexibleProgressId = task.progress({
+                stage_name: '  Invalid Stage  '
+            });
 
             assert.ok(checkpointId > 0);
+            assert.ok(flexibleCheckpointId > 0);
             assert.ok(progressId > 0);
-
-            assert.throws(() => {
-                task.audit('Invalid Code');
-            }, /snake_case/);
-
-            assert.throws(() => {
-                task.progress({ stage_name: 'Invalid Stage' });
-            }, /snake_case/);
+            assert.ok(flexibleProgressId > 0);
 
             assert.throws(() => {
                 task.progress({ progress_text: '   ' });
@@ -292,6 +292,8 @@ describe('Async Tasks', () => {
         });
         assert.equal(checkpointEvents[0].metadata.code, 'payload_validated');
         assert.equal(checkpointEvents[0].message, 'Payload validated');
+        assert.equal(checkpointEvents[1].metadata.code, 'Invalid Code');
+        assert.equal(checkpointEvents[1].message, 'Mixed case is allowed');
 
         const progressEvents = taskManager.getTaskEvents(taskId, {
             event_type: 'task_progress'
@@ -299,6 +301,7 @@ describe('Async Tasks', () => {
         assert.equal(progressEvents[0].metadata.stage_name, 'download_phase');
         assert.equal(progressEvents[0].metadata.progress_text, 'Downloading input');
         assert.equal(progressEvents[0].message, 'downloading');
+        assert.equal(progressEvents[1].metadata.stage_name, 'Invalid Stage');
     });
 
     it('should handle task resume', () => {
