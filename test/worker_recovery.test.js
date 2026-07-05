@@ -782,5 +782,73 @@ describe('Worker Recovery', () => {
 
             assert.equal(revivedClaims, 1);
         });
+
+        it('should not lose its active lease when idling without tasks', () => {
+            // This test reproduces the bug where a worker gets repeatedly re-registered
+            // when there are no tasks and running as a long-term daemon.
+            //
+            // Root cause: _ensureCurrentWorkerActive() calls _reapExpiredWorkers(now)
+            // BEFORE checking the current worker's status. If heartbeatWorker() silently
+            // fails (returns 0 rows because status != 'active'), the worker's expires_at
+            // is NOT extended. In the next cycle, _reapExpiredWorkers can mark the
+            // current worker as dead, triggering re-registration. The cycle then repeats.
+
+            const taskManager = new TaskManager({
+                dbConnection: testDb.connection,
+                pod_id: 'pod-idle',
+                worker_id: 'worker-idle',
+                worker_heartbeat_interval: 50,
+                worker_heartbeat_timeout: 300,
+                poll_interval: 20
+            });
+            taskManagers.push(taskManager);
+            taskManager.db.setup();
+
+            // Start with NO handlers - simulating "no tasks" daemon mode
+            taskManager.start();
+
+            // Wait for initial registration
+            assert.ok(waitFor(() => {
+                const worker = bootstrapAdapter.getWorker('worker-idle');
+                return worker && worker.status === 'active';
+            }, 3000));
+
+            // Record the initial registration time
+            const initialWorker = bootstrapAdapter.getWorker('worker-idle');
+            const initialRegisteredAt = initialWorker.registered_at;
+
+            // Run idle for multiple heartbeat cycles (10+ heartbeat cycles)
+            // With heartbeat_interval=50ms, this is at least 500ms of idling
+            coroutine.sleep(1000);
+
+            // Manually mark the worker as dead (simulating transient eviction)
+            bootstrapAdapter.markWorkerDead('worker-idle', Math.floor(Date.now() / 1000));
+
+            // Wait for re-registration to happen
+            assert.ok(waitFor(() => {
+                const worker = bootstrapAdapter.getWorker('worker-idle');
+                return worker && worker.status === 'active';
+            }, 3000));
+
+            // Now wait to see if re-registration happens AGAIN (the bug)
+            const afterFirstRecovery = bootstrapAdapter.getWorker('worker-idle');
+            const firstRecoveryRegisteredAt = afterFirstRecovery.registered_at;
+
+            // Sleep through multiple heartbeat cycles
+            coroutine.sleep(500);
+
+            const finalWorker = bootstrapAdapter.getWorker('worker-idle');
+            assert.equal(finalWorker.status, 'active');
+
+            // BUG CHECK: The worker should NOT have been re-registered again.
+            // If registered_at changed, it means _ensureCurrentWorkerActive re-registered
+            // the worker again unnecessarily, confirming the infinite re-registration bug.
+            assert.equal(
+                finalWorker.registered_at,
+                firstRecoveryRegisteredAt,
+                'Worker should not be re-registered again after recovery - ' +
+                'this indicates the infinite re-registration bug'
+            );
+        });
     });
 });
