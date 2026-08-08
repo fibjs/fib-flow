@@ -241,8 +241,10 @@ describe('Cron Tests', () => {
         assert.equal(task.status, 'paused');
         assert.equal(executionCount, 2);
 
-        taskManager.resumeTask(taskId);
+        // Pause first so the resumed task is not immediately claimed
+        // (resumeTask now wakes the processing loop without delay).
         taskManager.pause();
+        taskManager.resumeTask(taskId);
         const settleDeadline = Date.now() + 2000;
         while (Date.now() < settleDeadline) {
             task = taskManager.getTask(taskId);

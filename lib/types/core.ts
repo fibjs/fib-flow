@@ -25,6 +25,7 @@ export type TaskEventType =
     | 'task_timed_out'
     | 'task_completed'
     | 'task_paused'
+    | 'task_suspended'
     | 'task_resumed'
     | 'task_permanently_failed'
     | 'task_expired_deleted';
@@ -79,6 +80,8 @@ export interface TaskRecord {
     total_children?: number;
     completed_children?: number;
     context?: Uint8Array | null;
+    suspend_reason?: string | null;
+    resume_data?: unknown;
 }
 
 export interface TaskEventRecord {

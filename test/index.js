@@ -6,3 +6,4 @@ require('./flow_test');
 require('./validator.test');
 require('./task_info.test');
 require('./worker_recovery.test');
+require('./suspend_test');

@@ -295,10 +295,21 @@ pause()
 resume()
 
 /**
- * Resume a specific paused task by ID
+ * Resume a specific paused or suspended task by ID
  * @param {string} taskId Task ID
+ * @param {Object} [options] Resume options
+ * @param {*} [options.data] Resume data passed to the handler on re-run (task.resume_data)
+ * @param {string} [options.resume_reason] Optional reason recorded in the audit event
  */
-resumeTask(taskId)
+resumeTask(taskId, options)
+
+/**
+ * Cancel a suspended task, permanently failing it (e.g. approval rejected)
+ * @param {string} taskId Task ID
+ * @param {Object} [options] Cancel options
+ * @param {string} [options.reason] Cancellation reason stored as the task error
+ */
+cancelTask(taskId, options)
 
 /**
  * Pause a specific running task by ID
@@ -397,7 +408,7 @@ Status Values:
 - timeout: Task exceeded timeout duration
 - permanently_failed: Failed task that exceeded retry attempts
 - paused: Task manually paused
-- suspended: Parent task waiting for children
+- suspended: Task waiting for an external condition (children completion, or explicit suspend/resume)
 
 ### Audit Query
 Execution audit APIs expose persisted events, attempts, and structured task/workflow audit views.
@@ -637,7 +648,7 @@ Status Values:
 - timeout: Task exceeded timeout duration
 - permanently_failed: Failed task that exceeded retry attempts
 - paused: Task manually paused
-- suspended: Parent task waiting for children
+- suspended: Task waiting for an external condition (children completion, or explicit suspend/resume)
 
 ### Task Lifecycle
 Task handlers receive task objects that contain comprehensive information about the task and provide methods for controlling task execution.
@@ -650,7 +661,7 @@ Task Status Values:
 - `timeout`: Task exceeded its configured timeout duration
 - `permanently_failed`: Async task that has failed and exceeded retry attempts
 - `paused`: Cron task that has failed and exceeded retry attempts
-- `suspended`: Parent task waiting for child tasks to complete
+- `suspended`: Parent task waiting for child tasks, or task explicitly suspended for external interaction (resumed via `resumeTask`)
 
 Task Stage:
 - Stage is a numeric value starting from 0
@@ -671,8 +682,52 @@ taskManager.use('myTask', async (task) => {
     // Task control methods
     task.checkTimeout();           // Check if task has timed out
     task.setProgress(50);         // Update progress percentage
+    task.suspend(options);        // Return a suspension marker (see below)
     
     // Return value becomes task result
     return { success: true };
 });
 ```
+
+### Explicit Suspension (Human-in-the-Loop)
+
+A handler can deliberately suspend its workflow for external interaction (e.g. human approval) by returning `task.suspend(...)`. The task transitions to `suspended` with a `suspend_reason`, releases its execution slot, and becomes immune to heartbeat and total timeouts. It never auto-resumes — an external system must call `resumeTask` or `cancelTask`.
+
+```javascript
+// Register a handler that waits for approval
+const approvalTask = taskManager.use('requestApproval', async (task) => {
+    if (!task.resume_data) {
+        // First run: notify the approver and suspend
+        await notifyApprover(task.payload);
+        return task.suspend({ reason: 'awaiting_approval' });
+    }
+
+    // Resumed run: read the interaction result and continue
+    if (task.resume_data.decision === 'approved') {
+        await executeOrder(task.payload);
+        return { approved: true };
+    }
+    throw new Error('Order rejected by approver');
+});
+
+// External system resumes the task with the interaction result
+// (e.g. from an HTTP endpoint or message queue consumer)
+taskManager.resumeTask(taskId, {
+    data: { decision: 'approved', comment: 'ok' },
+    resume_reason: 'approved_by_ops'
+});
+
+// Or reject/abandon the request
+// taskManager.cancelTask(taskId, { reason: 'request abandoned' });
+
+// List all tasks currently waiting for approval
+const pendingApprovals = taskManager.getTasksByStatus('suspended', {
+    suspend_reason: 'awaiting_approval'
+});
+```
+
+Semantics:
+- `task.suspend(options)` requires a non-empty `reason`; it returns a marker object that must be returned from the handler.
+- On resume, the handler re-runs from scratch with the latest registered handler. Intermediate state must live in the database (`task.audit`/`task.progress`/payload/`context`); the resume data is available as `task.resume_data`.
+- Resuming advances `stage` by 1 (instead of resetting it) and clears `suspend_reason`.
+- Suspended tasks are exempt from retention cleanup (they are in-flight, not terminal).

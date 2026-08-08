@@ -26,7 +26,9 @@ Tasks in fib-flow can be in the following states:
 - `timeout`: Task exceeded its configured timeout duration and may be retried.
 - `permanently_failed`: Async task that has failed and exceeded retry attempts, requiring manual intervention.
 - `paused`: Cron task that has failed and exceeded retry attempts, can be resumed manually.
-- `suspended`: Parent task waiting for child tasks to complete, manages task dependencies.
+- `suspended`: Task waiting for an external condition, manages task dependencies:
+  - Parent task waiting for child tasks to complete (suspend reason `awaiting_subtasks`, auto-resumed by the system).
+  - Task explicitly suspended for external interaction such as human approval (custom suspend reason, resumed via `resumeTask`).
 
 ### State Transitions
 
@@ -55,7 +57,13 @@ Tasks follow these state transition rules:
    - `suspended` → `permanently_failed`: Async parent task when any child fails
    - `suspended` → `paused`: Cron parent task when any child fails
 
-5. Recovery Transitions
+5. Explicit Suspension Transitions (human-in-the-loop)
+   - `running` → `suspended`: Handler returns `task.suspend({ reason })` for external interaction (e.g. approval)
+   - `suspended` → `pending`: `resumeTask(taskId, { data })` — handler re-runs and reads `task.resume_data`
+   - `suspended` → `permanently_failed`: `cancelTask(taskId, { reason })` — approval rejected / request abandoned
+   - Explicitly suspended tasks are immune to heartbeat and total timeouts; they never auto-resume.
+
+6. Recovery Transitions
    - `paused` → `pending`: Manually resume a paused cron task
     - `running` → `pending`: Task ownership is recovered after the owning worker becomes dead or superseded
 
@@ -98,6 +106,11 @@ graph LR
     suspended --> |"all children done"| pending
     suspended --> |"child failed & async"| permanently_failed
     suspended --> |"child failed & cron"| paused
+    
+    %% Explicit suspension (human-in-the-loop)
+    running --> |"task.suspend()"| suspended
+    suspended --> |"resumeTask()"| pending
+    suspended --> |"cancelTask()"| permanently_failed
     
     %% Recovery
     paused --> |"manual resume"| pending

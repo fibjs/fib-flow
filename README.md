@@ -7,6 +7,7 @@ A powerful workflow management system built on fibjs for orchestrating complex t
 - **Workflow Management**: Parent-child task relationships, automatic state propagation
 - **Task Types**: Async tasks and cron jobs with priorities and delays
 - **State Management**: Comprehensive task lifecycle and state transitions
+- **Human-in-the-Loop**: Explicit task suspension (`task.suspend()`) for external interaction (e.g. approval), resumed later via `resumeTask`/`cancelTask` with resume data
 - **Hot Reload**: Update or remove handlers at runtime without restarting workers
 - **Reliability**: Automatic retries, timeout protection, transaction safety
 - **Worker Recovery**: Reclaim `running` jobs from dead or superseded workers through the `fib_flow_workers` registry
@@ -99,6 +100,26 @@ taskManager.use('sendEmail', async (task) => {
 
 // Remove a handler when a flow is unloaded
 taskManager.unuse('processImage');
+
+// Explicit suspension for human interaction (e.g. approval)
+taskManager.use('requestApproval', async (task) => {
+    if (!task.resume_data) {
+        await notifyApprover(task.payload);
+        return task.suspend({ reason: 'awaiting_approval' });
+    }
+    return { approved: task.resume_data.decision === 'approved' };
+});
+
+// External system resumes the task with the interaction result
+taskManager.resumeTask(taskId, { data: { decision: 'approved' } });
+
+// Or rejects it permanently
+// taskManager.cancelTask(taskId, { reason: 'request abandoned' });
+
+// List all tasks waiting for approval
+const pendingApprovals = taskManager.getTasksByStatus('suspended', {
+    suspend_reason: 'awaiting_approval'
+});
 ```
 
 Hot reload semantics:
