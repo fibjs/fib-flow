@@ -194,6 +194,38 @@ describe('Explicit Suspension (human-in-the-loop)', () => {
         assert.equal(task.suspend_reason, 'awaiting_approval');
     });
 
+    it('should persist binary context snapshot through suspension and resume', () => {
+        const snapshot = Buffer.from([1, 2, 3, 4]);
+        let resumedContext;
+
+        taskManager.use('snapshotFlow', async (task) => {
+            if (!task.resume_data) {
+                return task.suspend({
+                    reason: 'awaiting_approval',
+                    context: snapshot
+                });
+            }
+            resumedContext = task.context;
+            return {
+                restored: resumedContext && resumedContext.toString('hex') === snapshot.toString('hex')
+            };
+        });
+
+        const taskId = taskManager.async('snapshotFlow', {});
+        const suspended = waitForStatus(taskManager, taskId, 'suspended');
+        assert.equal(
+            suspended.context.toString('hex'),
+            snapshot.toString('hex'),
+            'context should be persisted when suspending'
+        );
+
+        taskManager.resumeTask(taskId, { data: { approved: true } });
+        const completed = waitForStatus(taskManager, taskId, 'completed');
+
+        assert.equal(completed.result.restored, true, 'handler should read the same context after resume');
+        assert.equal(resumedContext.toString('hex'), snapshot.toString('hex'));
+    });
+
     it('should fail task when suspend() is called without a reason', () => {
         taskManager.use('badFlow', async (task) => {
             return task.suspend({});

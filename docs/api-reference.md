@@ -697,12 +697,17 @@ A handler can deliberately suspend its workflow for external interaction (e.g. h
 // Register a handler that waits for approval
 const approvalTask = taskManager.use('requestApproval', async (task) => {
     if (!task.resume_data) {
-        // First run: notify the approver and suspend
+        // First run: persist a binary snapshot, notify the approver, and suspend
+        const snapshot = serializeFlowState(task);
         await notifyApprover(task.payload);
-        return task.suspend({ reason: 'awaiting_approval' });
+        return task.suspend({
+            reason: 'awaiting_approval',
+            context: snapshot   // Buffer/Uint8Array stored in the task's context column
+        });
     }
 
-    // Resumed run: read the interaction result and continue
+    // Resumed run: restore the snapshot and read the interaction result
+    const state = deserializeFlowState(task.context);
     if (task.resume_data.decision === 'approved') {
         await executeOrder(task.payload);
         return { approved: true };
@@ -728,6 +733,7 @@ const pendingApprovals = taskManager.getTasksByStatus('suspended', {
 
 Semantics:
 - `task.suspend(options)` requires a non-empty `reason`; it returns a marker object that must be returned from the handler.
+- `task.suspend({ reason, context })` optionally persists a binary snapshot to the task's `context` column (same storage as the SubTasks context). On resume the handler reads it back as `task.context` (Buffer).
 - On resume, the handler re-runs from scratch with the latest registered handler. Intermediate state must live in the database (`task.audit`/`task.progress`/payload/`context`); the resume data is available as `task.resume_data`.
 - Resuming advances `stage` by 1 (instead of resetting it) and clears `suspend_reason`.
 - Suspended tasks are exempt from retention cleanup (they are in-flight, not terminal).
