@@ -58,10 +58,10 @@ describe('Explicit Suspension (human-in-the-loop)', () => {
 
         taskManager.use('approvalFlow', async (task) => {
             executions++;
-            if (!task.resume_data) {
+            if (task.stage === 0) {
                 return task.suspend({ reason: 'awaiting_approval' });
             }
-            return { approved: task.resume_data.approved };
+            return { approved: true };
         });
 
         const taskId = taskManager.async('approvalFlow', { amount: 100 });
@@ -80,33 +80,26 @@ describe('Explicit Suspension (human-in-the-loop)', () => {
         assert.equal(attempts[attempts.length - 1].outcome, 'suspended', 'attempt should close with suspended outcome');
     });
 
-    it('should resume with resume_data and re-run handler', () => {
+    it('should resume and re-run handler with advanced stage', () => {
         let executions = 0;
 
         taskManager.use('approvalFlow', async (task) => {
             executions++;
-            if (!task.resume_data) {
+            if (task.stage === 0) {
                 return task.suspend({ reason: 'awaiting_approval' });
             }
-            return {
-                approved: task.resume_data.approved,
-                comment: task.resume_data.comment
-            };
+            return { continued: true };
         });
 
         const taskId = taskManager.async('approvalFlow', { amount: 100 });
         waitForStatus(taskManager, taskId, 'suspended');
 
-        taskManager.resumeTask(taskId, {
-            data: { approved: true, comment: 'ok' },
-            resume_reason: 'approved_by_ops'
-        });
+        taskManager.resumeTask(taskId, { resume_reason: 'approved_by_ops' });
 
         const completed = waitForStatus(taskManager, taskId, 'completed');
 
         assert.equal(executions, 2, 'handler should re-run after resume');
-        assert.equal(completed.result.approved, true, 'handler should read resume data');
-        assert.equal(completed.result.comment, 'ok');
+        assert.equal(completed.result.continued, true, 'handler should continue on the resumed run');
         assert.equal(completed.stage, 1, 'stage should advance on resume instead of resetting');
 
         const events = taskManager.getTaskEvents(taskId);
@@ -119,7 +112,7 @@ describe('Explicit Suspension (human-in-the-loop)', () => {
 
     it('should cancel suspended task to permanently_failed', () => {
         taskManager.use('approvalFlow', async (task) => {
-            if (!task.resume_data) {
+            if (task.stage === 0) {
                 return task.suspend({ reason: 'awaiting_approval' });
             }
             return { approved: true };
@@ -141,14 +134,14 @@ describe('Explicit Suspension (human-in-the-loop)', () => {
 
     it('should list suspended tasks filtered by suspend_reason', () => {
         taskManager.use('approvalFlow', async (task) => {
-            if (!task.resume_data) {
+            if (task.stage === 0) {
                 return task.suspend({ reason: 'awaiting_approval' });
             }
             return { approved: true };
         });
 
         taskManager.use('inputFlow', async (task) => {
-            if (!task.resume_data) {
+            if (task.stage === 0) {
                 return task.suspend({ reason: 'awaiting_input' });
             }
             return { done: true };
@@ -169,7 +162,7 @@ describe('Explicit Suspension (human-in-the-loop)', () => {
 
     it('should stay suspended until explicitly resumed (immune to heartbeat timeout)', () => {
         taskManager.use('approvalFlow', async (task) => {
-            if (!task.resume_data) {
+            if (task.stage === 0) {
                 return task.suspend({ reason: 'awaiting_approval' });
             }
             return { approved: true };
@@ -196,7 +189,7 @@ describe('Explicit Suspension (human-in-the-loop)', () => {
         let resumedContext;
 
         taskManager.use('snapshotFlow', async (task) => {
-            if (!task.resume_data) {
+            if (task.stage === 0) {
                 return task.suspend({
                     reason: 'awaiting_approval',
                     context: snapshot
@@ -216,7 +209,7 @@ describe('Explicit Suspension (human-in-the-loop)', () => {
             'context should be persisted when suspending'
         );
 
-        taskManager.resumeTask(taskId, { data: { approved: true } });
+        taskManager.resumeTask(taskId);
         const completed = waitForStatus(taskManager, taskId, 'completed');
 
         assert.equal(completed.result.restored, true, 'handler should read the same context after resume');
@@ -243,10 +236,10 @@ describe('Explicit Suspension (human-in-the-loop)', () => {
         });
 
         taskManager.use('approvalChild', async (task) => {
-            if (!task.resume_data) {
+            if (task.stage === 0) {
                 return task.suspend({ reason: 'awaiting_approval' });
             }
-            return { approved: task.resume_data.approved };
+            return { approved: true };
         });
 
         const parentId = taskManager.async('parentFlow', {});
@@ -258,7 +251,7 @@ describe('Explicit Suspension (human-in-the-loop)', () => {
         // Parent stays suspended while the child waits for human interaction
         assert.equal(taskManager.getTask(parentId).status, 'suspended');
 
-        taskManager.resumeTask(childId, { data: { approved: true } });
+        taskManager.resumeTask(childId);
         waitForStatus(taskManager, childId, 'completed');
         waitForStatus(taskManager, parentId, 'completed');
 

@@ -59,7 +59,7 @@ Tasks follow these state transition rules:
 
 5. Explicit Suspension Transitions (human-in-the-loop)
    - `running` → `suspended`: Handler returns `task.suspend({ reason })` for external interaction (e.g. approval)
-   - `suspended` → `pending`: `resumeTask(taskId, { data })` — handler re-runs and reads `task.resume_data`
+   - `suspended` → `pending`: `resumeTask(taskId)` — handler re-runs with an advanced stage
    - `suspended` → `permanently_failed`: `cancelTask(taskId, { reason })` — approval rejected / request abandoned
    - Explicitly suspended tasks are immune to heartbeat and total timeouts; they never auto-resume.
 

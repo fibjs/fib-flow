@@ -103,15 +103,16 @@ taskManager.unuse('processImage');
 
 // Explicit suspension for human interaction (e.g. approval)
 taskManager.use('requestApproval', async (task) => {
-    if (!task.resume_data) {
+    if (task.stage === 0) {
         await notifyApprover(task.payload);
         return task.suspend({ reason: 'awaiting_approval' });
     }
-    return { approved: task.resume_data.decision === 'approved' };
+    // Resumed run: stage has advanced; interaction results live in the caller's store
+    return { approved: true };
 });
 
-// External system resumes the task with the interaction result
-taskManager.resumeTask(taskId, { data: { decision: 'approved' } });
+// External system resumes the task when the interaction finishes
+taskManager.resumeTask(taskId);
 
 // Or rejects it permanently
 // taskManager.cancelTask(taskId, { reason: 'request abandoned' });

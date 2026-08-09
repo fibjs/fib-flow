@@ -80,7 +80,6 @@ export interface TaskRecord {
     total_children?: number;
     completed_children?: number;
     context?: Uint8Array | null;
-    resume_data?: unknown;
 }
 
 export interface TaskEventRecord {

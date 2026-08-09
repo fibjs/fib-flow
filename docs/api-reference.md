@@ -298,7 +298,6 @@ resume()
  * Resume a specific paused or suspended task by ID
  * @param {string} taskId Task ID
  * @param {Object} [options] Resume options
- * @param {*} [options.data] Resume data passed to the handler on re-run (task.resume_data)
  * @param {string} [options.resume_reason] Optional reason recorded in the audit event
  */
 resumeTask(taskId, options)
@@ -696,7 +695,7 @@ A handler can deliberately suspend its workflow for external interaction (e.g. h
 ```javascript
 // Register a handler that waits for approval
 const approvalTask = taskManager.use('requestApproval', async (task) => {
-    if (!task.resume_data) {
+    if (task.stage === 0) {
         // First run: persist a binary snapshot, notify the approver, and suspend
         const snapshot = serializeFlowState(task);
         await notifyApprover(task.payload);
@@ -706,21 +705,19 @@ const approvalTask = taskManager.use('requestApproval', async (task) => {
         });
     }
 
-    // Resumed run: restore the snapshot and read the interaction result
+    // Resumed run: restore the snapshot and continue
     const state = deserializeFlowState(task.context);
-    if (task.resume_data.decision === 'approved') {
+    const decision = await loadInteractionResult(task.id); // caller-managed store
+    if (decision === 'approved') {
         await executeOrder(task.payload);
         return { approved: true };
     }
     throw new Error('Order rejected by approver');
 });
 
-// External system resumes the task with the interaction result
+// External system resumes the task when the interaction finishes
 // (e.g. from an HTTP endpoint or message queue consumer)
-taskManager.resumeTask(taskId, {
-    data: { decision: 'approved', comment: 'ok' },
-    resume_reason: 'approved_by_ops'
-});
+taskManager.resumeTask(taskId, { resume_reason: 'approved_by_ops' });
 
 // Or reject/abandon the request
 // taskManager.cancelTask(taskId, { reason: 'request abandoned' });
@@ -734,6 +731,6 @@ const pendingApprovals = taskManager.getTasksByStatus('suspended', {
 Semantics:
 - `task.suspend(options)` requires a non-empty `reason`; it returns a marker object that must be returned from the handler.
 - `task.suspend({ reason, context })` optionally persists a binary snapshot to the task's `context` column (same storage as the SubTasks context). On resume the handler reads it back as `task.context` (Buffer).
-- On resume, the handler re-runs from scratch with the latest registered handler. Intermediate state must live in the database (`task.audit`/`task.progress`/payload/`context`); the resume data is available as `task.resume_data`.
-- Resuming advances `stage` by 1 (instead of resetting it); the suspend reason stays queryable via the `task_suspended` audit event, and `getTasksByStatus('suspended', { suspend_reason })` derives it from that event.
+- On resume, the handler re-runs from scratch with the latest registered handler and `stage` advanced by 1. Use `task.stage` to detect the resumed run (same pattern as SubTasks parents); intermediate state must live in the database (`task.audit`/`task.progress`/payload/`context`). Interaction results are managed by the caller (e.g. an external store keyed by `task.id`).
+- The suspend reason stays queryable via the `task_suspended` audit event; `getTasksByStatus('suspended', { suspend_reason })` derives it from that event.
 - Suspended tasks are exempt from retention cleanup (they are in-flight, not terminal).
