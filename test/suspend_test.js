@@ -65,10 +65,9 @@ describe('Explicit Suspension (human-in-the-loop)', () => {
         });
 
         const taskId = taskManager.async('approvalFlow', { amount: 100 });
-        const suspended = waitForStatus(taskManager, taskId, 'suspended');
+        waitForStatus(taskManager, taskId, 'suspended');
 
         assert.equal(executions, 1, 'handler should run exactly once before suspending');
-        assert.equal(suspended.suspend_reason, 'awaiting_approval', 'suspend reason should be persisted');
 
         const events = taskManager.getTaskEvents(taskId);
         const suspendEvent = events.find(event => event.event_type === 'task_suspended');
@@ -109,7 +108,6 @@ describe('Explicit Suspension (human-in-the-loop)', () => {
         assert.equal(completed.result.approved, true, 'handler should read resume data');
         assert.equal(completed.result.comment, 'ok');
         assert.equal(completed.stage, 1, 'stage should advance on resume instead of resetting');
-        assert.equal(completed.suspend_reason, null, 'suspend reason should be cleared after resume');
 
         const events = taskManager.getTaskEvents(taskId);
         const resumeEvent = events.find(event => event.event_type === 'task_resumed');
@@ -191,7 +189,6 @@ describe('Explicit Suspension (human-in-the-loop)', () => {
 
         const task = taskManager.getTask(taskId);
         assert.equal(task.status, 'suspended', 'suspended task should not be timed out');
-        assert.equal(task.suspend_reason, 'awaiting_approval');
     });
 
     it('should persist binary context snapshot through suspension and resume', () => {

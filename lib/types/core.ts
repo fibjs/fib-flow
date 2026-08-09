@@ -80,7 +80,6 @@ export interface TaskRecord {
     total_children?: number;
     completed_children?: number;
     context?: Uint8Array | null;
-    suspend_reason?: string | null;
     resume_data?: unknown;
 }
 

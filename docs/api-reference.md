@@ -691,7 +691,7 @@ taskManager.use('myTask', async (task) => {
 
 ### Explicit Suspension (Human-in-the-Loop)
 
-A handler can deliberately suspend its workflow for external interaction (e.g. human approval) by returning `task.suspend(...)`. The task transitions to `suspended` with a `suspend_reason`, releases its execution slot, and becomes immune to heartbeat and total timeouts. It never auto-resumes — an external system must call `resumeTask` or `cancelTask`.
+A handler can deliberately suspend its workflow for external interaction (e.g. human approval) by returning `task.suspend(...)`. The task transitions to `suspended` (the suspend reason is recorded in the `task_suspended` audit event), releases its execution slot, and becomes immune to heartbeat and total timeouts. It never auto-resumes — an external system must call `resumeTask` or `cancelTask`.
 
 ```javascript
 // Register a handler that waits for approval
@@ -735,5 +735,5 @@ Semantics:
 - `task.suspend(options)` requires a non-empty `reason`; it returns a marker object that must be returned from the handler.
 - `task.suspend({ reason, context })` optionally persists a binary snapshot to the task's `context` column (same storage as the SubTasks context). On resume the handler reads it back as `task.context` (Buffer).
 - On resume, the handler re-runs from scratch with the latest registered handler. Intermediate state must live in the database (`task.audit`/`task.progress`/payload/`context`); the resume data is available as `task.resume_data`.
-- Resuming advances `stage` by 1 (instead of resetting it) and clears `suspend_reason`.
+- Resuming advances `stage` by 1 (instead of resetting it); the suspend reason stays queryable via the `task_suspended` audit event, and `getTasksByStatus('suspended', { suspend_reason })` derives it from that event.
 - Suspended tasks are exempt from retention cleanup (they are in-flight, not terminal).
