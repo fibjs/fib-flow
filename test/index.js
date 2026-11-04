@@ -1,5 +1,6 @@
 require('./db_test');
 require('./schema.test');
+require('./resilience.test');
 require('./task_manager.test');
 require('./async_test');
 require('./cron_test');

@@ -65,7 +65,11 @@ Current generic transitions include:
 `cancelled_tasks` and exclude it from `failed_tasks`.
 
 When consuming audit history, prefer `event_type` first, then inspect `from_status` and `to_status` for generic state-change rows.
-The current runtime does not emit a dedicated `task_resumed` row; resume semantics are represented through `task_status_changed` plus transition fields.
+
+`task_resumed` **is** emitted by the runtime: it marks a schedule re-registration
+reviving a `paused`/`cancelled` cron row, and a manual resume of a `suspended`
+task (`resumeTask`). Resumes that are not represented by that event still fall
+back to `task_status_changed` with the transition fields filled in.
 
 ## Attempt Semantics
 
@@ -89,15 +93,34 @@ The main task table may also keep these lightweight fields:
 
 These fields are cache only. They are useful for list views and lightweight dashboards, but they are not a replacement for persisted events and attempts.
 
+## Retention Deletions
+
+Retention does **not** write a per-task audit event. The cleanup candidates come
+from `fib_flow_tasks`, and the sweep deletes the task row together with its events
+and attempts, so any event keyed to a deleted task would never be collected by a
+later sweep — it would grow the event table without bound.
+
+Deletions are reported by:
+
+- the returned counters (`tasks_deleted`, `tasks_deleted_by_row_policy`,
+  `tasks_deleted_by_global_policy`), and
+- an info-level `[retention]` log line grouping the deletions by policy along with
+  the window and status set in use.
+
+`task_expired_deleted` is a reserved name only. It is not part of `TaskEventType`
+and is not emitted.
+
 ## Declared but Not Currently Emitted
 
-The shared type definitions still include some event types that are not emitted by the current runtime implementation:
+One reserved name remains in the documentation but is never produced by the
+runtime:
 
-- `task_heartbeat`
-- `task_resumed`
-- `task_expired_deleted`
+- `task_heartbeat` — heartbeat activity updates `last_active_time` directly
+  instead of writing an event row (an event per heartbeat per task would dominate
+  the event table).
 
-Treat these as reserved names for future evolution unless and until a runtime path starts producing them.
+Treat it as a reserved name for future evolution unless and until a runtime path
+starts producing it.
 
 ## Precision Notes
 

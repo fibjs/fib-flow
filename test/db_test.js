@@ -711,7 +711,7 @@ describe("TaskManager DB Connection", () => {
                 assert.equal(cleanup.tasks_deleted_by_global_policy, 1);
             });
 
-            it("should delete an expired row policy regardless of status filters", () => {
+            it("should apply the status gate to row-level retention windows", () => {
                 const now = Math.floor(Date.now() / 1000);
 
                 const pausedId = adapter.insertTask({
@@ -723,15 +723,85 @@ describe("TaskManager DB Connection", () => {
                 });
                 directUpdateTaskProperty(adapter, pausedId, 'last_active_time', now - 7200);
 
-                // `paused` is not in the global status set; the row window still applies.
-                const cleanup = adapter.cleanupExpiredTasks({
+                // `paused` is not in the configured status set, so neither policy may
+                // touch it: a row-level window changes how long a row is kept, never
+                // which states are eligible for deletion.
+                const skipped = adapter.cleanupExpiredTasks({
                     expire_time: 86400,
                     statuses: ['completed'],
                     now
                 });
 
+                assert.ok(adapter.getTask(pausedId), 'paused row must survive');
+                assert.equal(skipped.tasks_deleted_by_row_policy, 0);
+
+                // With `paused` allowed, the row-level window applies.
+                const cleaned = adapter.cleanupExpiredTasks({
+                    expire_time: 86400,
+                    statuses: ['completed', 'paused'],
+                    now
+                });
+
                 assert.equal(adapter.getTask(pausedId), null);
-                assert.equal(cleanup.tasks_deleted_by_row_policy, 1);
+                assert.equal(cleaned.tasks_deleted_by_row_policy, 1);
+            });
+
+            it("should keep runtime-critical statuses even with an expired row window", () => {
+                const now = Math.floor(Date.now() / 1000);
+
+                const statuses = ['pending', 'running', 'suspended', 'failed', 'timeout'];
+                const ids = statuses.map(status => {
+                    const taskId = adapter.insertTask({
+                        name: `retention_keep_${status}`,
+                        type: 'async',
+                        retention_expire_time: 600
+                    });
+                    directUpdateTaskProperty(adapter, taskId, 'status', status);
+                    directUpdateTaskProperty(adapter, taskId, 'last_active_time', now - 30 * 86400);
+                    return taskId;
+                });
+
+                const cleanup = adapter.cleanupExpiredTasks({ expire_time: 86400, now });
+
+                assert.equal(cleanup.tasks_deleted_by_row_policy, 0);
+                ids.forEach((taskId, index) => {
+                    assert.ok(adapter.getTask(taskId), `${statuses[index]} row must survive retention`);
+                });
+            });
+
+            it("should report retention deletions by policy without leaving orphan audit rows", () => {
+                const now = Math.floor(Date.now() / 1000);
+                const taskId = adapter.insertTask({ name: 'retention_marker', type: 'async' });
+                adapter.claimTask(['retention_marker'], 'retention-worker');
+                adapter.updateTaskStatus(taskId, 'completed');
+                directUpdateTaskProperty(adapter, taskId, 'last_active_time', now - 7200);
+
+                const cleanup = adapter.cleanupExpiredTasks({ expire_time: 3600, now });
+
+                assert.equal(cleanup.tasks_deleted, 1);
+                assert.equal(cleanup.tasks_deleted_by_global_policy, 1);
+                assert.equal(cleanup.tasks_deleted_by_row_policy, 0);
+                assert.equal(adapter.getTask(taskId), null);
+
+                // Retention must leave no residue: an event keyed to a deleted task
+                // would never be collected by a later sweep (candidates come from
+                // fib_flow_tasks) and would grow the event table without bound.
+                const leftovers = adapter.pool(conn => conn.execute(
+                    'SELECT COUNT(*) AS total FROM fib_flow_task_events WHERE task_id = ?',
+                    taskId
+                ));
+                assert.equal(Number(leftovers[0].total), 0);
+            });
+
+            it("should not throw when the global window is disabled", () => {
+                const empty = adapter.cleanupExpiredTasks({ expire_time: null });
+                assert.equal(empty.tasks_deleted, 0);
+
+                // Statuses are still validated without a global window: the same gate
+                // governs row-level retention.
+                assert.throws(() => {
+                    adapter.cleanupExpiredTasks({ expire_time: null, statuses: ['suspended'] });
+                }, /Unsupported retention status: suspended/);
             });
 
             it("should inherit the parent retention window for child tasks", () => {
@@ -844,11 +914,16 @@ describe("TaskManager DB Connection", () => {
 
                 const cleanup = adapter.cleanupExpiredTasks({ expire_time: 1800, now });
                 assert.equal(cleanup.tasks_deleted, 2);
+                assert.equal(cleanup.tasks_deleted_by_global_policy, 2);
 
                 const workflowAudit = adapter.getWorkflowAudit(rootTaskId);
                 assert.equal(workflowAudit.root_task, null);
                 assert.equal(workflowAudit.tasks.total, 0);
                 assert.equal(workflowAudit.tasks.items.length, 0);
+
+                // Deletion stays complete: no orphaned audit rows are left behind for
+                // removed tasks, so the retention invariant holds. The deletion itself
+                // is reported through the cleanup counters plus the retention log.
                 assert.equal(workflowAudit.events.total, 0);
                 assert.equal(workflowAudit.events.items.length, 0);
 

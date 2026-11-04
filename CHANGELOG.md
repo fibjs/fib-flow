@@ -2,6 +2,50 @@
 
 All notable changes to this project are documented in this file.
 
+## 8.0.1
+
+Bugfix release for `8.0.0`. Two of these are availability issues: a public API
+call could take the worker process down, and the default retention configuration
+could delete rows the runtime still needed.
+
+### Fixed
+
+- **A disappeared task row no longer kills the process.** When a `running` task's
+  row was deleted (operator cleanup, `deleteTasks()`, `clearTasks()`, another
+  process), the terminal-status write threw `Task <id> not found` from inside the
+  worker fiber, and fibjs propagated it out of `coroutine.start` — exit code 1.
+  Status writes are now best-effort: a missing row, a stale owner, or any other
+  database error is logged and swallowed. See `docs/task-handler.md`.
+- **Row-level retention now respects the status gate.** An expired
+  `retention_expire_time` used to delete the row *regardless of status*, so a
+  long-gap cron schedule, an async task waiting on `delay`, a `failed` task inside
+  its `retry_interval`, or a `suspended` approval snapshot could vanish without a
+  trace — and deleting a `running` row additionally stranded the executing worker.
+  Row-level windows now share the global `statuses` gate: they change how long a
+  row is kept, never which states may be dropped.
+- **`runRetention()` no longer throws `datatype mismatch` when the global window is
+  disabled.** `normalizeRetentionPolicy()` returned early without `batch_size`, so
+  the cleanup query bound `undefined` into `LIMIT ?`.
+- **Automatic sweeps run with row-level-only configuration.** Both guards required
+  `retention.expire_time`, so `retention: { expire_time: null }` never collected
+  row-level windows automatically; they only worked via an explicit
+  `runRetention(<seconds>)`.
+- **Child tasks inherit the parent's retention window**, and may override it. This
+  was documented but not implemented.
+- Retention deletions are now reported by an info-level `[retention]` log grouped
+  by policy, alongside the existing `tasks_deleted_by_row_policy` /
+  `tasks_deleted_by_global_policy` counters. No per-task audit event is written:
+  an event keyed to a deleted task would never be collected by a later sweep and
+  would grow the event table without bound.
+
+### Documentation
+
+- `docs/audit-retention-policy.md`: replaced "regardless of status" with the actual
+  semantics, documented the shared status gate and row-level-only behaviour.
+- `docs/execution-audit-events.md`: `task_resumed` *is* emitted (the doc claimed
+  otherwise); `task_expired_deleted` is documented as a reserved name only.
+- `docs/task-handler.md`: added the status-write failure matrix.
+
 ## 7.0.0
 
 This release makes cron scheduling a first-class capability: registration is

@@ -105,6 +105,35 @@ taskManager.configureWorker({
 - Tasks requiring specific resources wait for appropriate workers
 - Ensures optimal resource utilization across the system
 
+## Status Writes Are Best-Effort by Design
+
+After a handler returns, the worker writes the task's terminal status. That write
+can fail for reasons that have nothing to do with the handler:
+
+- the row was deleted meanwhile (`deleteTasks()`, `clearTasks()`, an operator's
+  SQL statement, retention in another process);
+- another worker took the row over (worker recovery after a supersede);
+- the database closed or lost the connection while the task was running.
+
+None of these is recoverable from the executing fiber, and an uncaught error
+there takes the **whole process** down. fib-flow therefore never propagates a
+status-write failure:
+
+| Situation | Behaviour |
+| --- | --- |
+| Row disappeared | warning log, write skipped |
+| Row owned by another worker / already moved on | warning log, stale write skipped |
+| Any other database error (closed pool, lock timeout, …) | error log, write skipped |
+
+The attempt record and the handler's own side effects are unaffected; only the
+snapshot write is lost. If your workflow needs a guaranteed record, treat the
+task row as observability rather than as the transaction log and persist the
+outcome in your own storage from inside the handler.
+
+Because a well-behaved deployment uses `pauseTask` / `cancelTask` rather than raw
+deletes, losing a status write usually means someone bypassed the API. Check the
+`[TaskManager] Task <id> disappeared before its ... update` warning.
+
 ## Example Configuration
 
 ```javascript

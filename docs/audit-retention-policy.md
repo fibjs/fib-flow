@@ -52,7 +52,7 @@ const taskManager = new TaskManager({
 
 Current minimal policy fields:
 
-- `expire_time`: expiration window in seconds
+- `expire_time`: expiration window in seconds; `null` disables the global window (row-level windows still work)
 - `statuses`: terminal statuses eligible for cleanup
 
 Currently supported statuses:
@@ -61,6 +61,10 @@ Currently supported statuses:
 - `permanently_failed`
 - `paused`
 - `cancelled`
+
+Statuses outside this set (`pending`, `running`, `failed`, `timeout`,
+`suspended`) are rejected — including when they are supplied while the global
+window is disabled. The same gate governs row-level windows.
 
 Default statuses:
 
@@ -94,22 +98,26 @@ taskManager.async('temp_import', payload, {
 
 Semantics:
 
-- Non-null `retention_expire_time` → the row is deleted when `last_active_time < now - retention_expire_time`, **regardless of status** and regardless of the global `statuses` filter.
+- Non-null `retention_expire_time` → the row becomes **eligible** earlier or later than the global window, but the **status gate is shared** with the global policy: row-level windows change *how long* a row is kept, never *which states may be dropped*. Only `completed`, `permanently_failed`, `paused` and `cancelled` rows can be removed.
 - `NULL` → the global window and status filter apply, exactly as before.
-- Child tasks created through `next([...])` inherit the parent window when they are created from a parent that defines one.
+- Child tasks created through `next([...])` inherit the parent window when they are created from a parent that defines one. A child may override it by setting its own `retention_expire_time`.
 - Cleanup returns `tasks_deleted_by_row_policy` and `tasks_deleted_by_global_policy` so per-policy deletions stay observable.
+- Row-level windows work even when the global window is disabled (`retention: { expire_time: null }`): automatic sweeps still run as long as some row carries a row-level window.
+
+Why the status gate is not optional: a row-level window applied to every state would delete rows the runtime still needs. `pending` covers cron schedules waiting for their next occurrence and async tasks scheduled with `delay`; `failed`/`timeout` covers retry chains inside their `retry_interval`; `suspended` holds the workflow snapshot an external `resumeTask` depends on; `running` is a task currently executing. Deleting any of these is silent data loss, and deleting a `running` row additionally strands the executing worker.
 
 ## Cleanup Semantics
 
 Retention cleanup is task-centric and lifecycle-consistent:
 
 1. identify rows whose own `retention_expire_time` has elapsed, and rows without a row-level window whose `last_active_time` is older than `now - expire_time`
-2. restrict the global-window candidates to the configured terminal statuses
+2. restrict **both** candidate sets to the configured terminal statuses
 3. delete the corresponding audit events
 4. delete the corresponding attempts
 5. delete the task rows themselves
+6. log a per-policy summary (`row` vs `global`, plus the window and status set in use)
 
-This preserves the invariant that retention cleanup should not leave orphaned audit rows behind.
+This preserves the invariant that retention cleanup should not leave orphaned audit rows behind. That invariant is why the deletion is reported through the returned counters and the retention log rather than a per-task audit event: an event keyed to a deleted task would never be collected by a later sweep (candidates come from `fib_flow_tasks`), so it would grow the event table without bound.
 
 ## Automatic vs Manual Cleanup
 
