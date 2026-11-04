@@ -6,9 +6,9 @@
     "noEmit": true,
     "esModuleInterop": true,
     "resolveJsonModule": true,
-    "skipLibCheck": true,
+    "skipLibCheck": false,
     "forceConsistentCasingInFileNames": true,
     "lib": ["ES2020"]
   },
-  "include": ["lib/types/**/*.ts"]
+  "include": ["index.d.ts", "lib/types/**/*.d.ts", "test/types/**/*.ts"]
 }

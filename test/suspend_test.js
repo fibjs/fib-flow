@@ -110,7 +110,7 @@ describe('Explicit Suspension (human-in-the-loop)', () => {
         assert.equal(resumeEvent.metadata.resume_reason, 'approved_by_ops');
     });
 
-    it('should cancel suspended task to permanently_failed', () => {
+    it('should cancel suspended task to cancelled', () => {
         taskManager.use('approvalFlow', async (task) => {
             if (task.stage === 0) {
                 return task.suspend({ reason: 'awaiting_approval' });
@@ -122,13 +122,13 @@ describe('Explicit Suspension (human-in-the-loop)', () => {
         waitForStatus(taskManager, taskId, 'suspended');
 
         taskManager.cancelTask(taskId, { reason: 'request abandoned' });
-        const cancelled = waitForStatus(taskManager, taskId, 'permanently_failed');
+        const cancelled = waitForStatus(taskManager, taskId, 'cancelled');
 
         assert.equal(cancelled.error, 'request abandoned');
 
         const events = taskManager.getTaskEvents(taskId);
         assert.ok(events.some(event =>
-            event.event_type === 'task_permanently_failed' && event.from_status === 'suspended'
+            event.event_type === 'task_cancelled' && event.from_status === 'suspended'
         ));
     });
 

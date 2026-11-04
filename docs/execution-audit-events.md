@@ -42,6 +42,10 @@ Each event row may contain these fields:
 | `task_retry_scheduled` | Timeout handling schedules another run | Usually `failed/timeout -> pending` | retry count, next run time |
 | `task_paused` | A cron task is paused after retry exhaustion or explicit pause transition | Usually `failed/timeout -> paused` or `running -> paused` | error, retry exhaustion flags |
 | `task_permanently_failed` | An async task exhausts retries | Usually `failed/timeout -> permanently_failed` | error, retry exhaustion flags |
+| `task_cancelled` | An operator cancels a task or schedule | `pending/paused/failed/timeout/suspended -> cancelled` | reason, error |
+| `task_resumed` | A schedule re-registration revives a paused/cancelled cron row | `paused/cancelled -> pending` | `resume_reason: 'schedule_reregistered'`, cron key |
+| `task_cron_rescheduled` | A re-registered schedule changes `cron_expr` or `cron_tz` | No status transition; schedule update | previous/new expression, previous/new time zone, previous/new `next_run_time` |
+| `task_cron_missed` | `catchUp: 'skip'` drops a window that is at least one period late | `running -> pending` with an attempt outcome of `skipped` | `skipped_windows`, scheduled run time, next run time |
 | `task_status_changed` | A status change does not map to a dedicated event type | Used for generic transitions such as `running -> suspended` or `suspended -> pending` | retry count, next run time, resume reason |
 | `task_progress` | Handler code calls `task.progress()` | No authoritative status transition; snapshot cache update only | stage name, progress text, progress percent, handler metadata |
 | `task_checkpoint` | Handler code calls `task.audit()` | No authoritative status transition; checkpoint only | checkpoint code, message, handler metadata |
@@ -56,6 +60,9 @@ Current generic transitions include:
 - parent task resumes from `suspended` to `pending` after all children complete
 - manually resumed tasks move from `paused` to `pending` through `task_status_changed`
 - transitions to `pending` that are not represented by a dedicated retry event
+
+`cancelled` is never reported as a failure. Workflow summaries expose it as
+`cancelled_tasks` and exclude it from `failed_tasks`.
 
 When consuming audit history, prefer `event_type` first, then inspect `from_status` and `to_status` for generic state-change rows.
 The current runtime does not emit a dedicated `task_resumed` row; resume semantics are represented through `task_status_changed` plus transition fields.

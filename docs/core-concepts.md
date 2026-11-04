@@ -26,6 +26,7 @@ Tasks in fib-flow can be in the following states:
 - `timeout`: Task exceeded its configured timeout duration and may be retried.
 - `permanently_failed`: Async task that has failed and exceeded retry attempts, requiring manual intervention.
 - `paused`: Cron task that has failed and exceeded retry attempts, can be resumed manually.
+- `cancelled`: Task (or schedule) explicitly cancelled by an operator. A deliberate outcome, not a failure.
 - `suspended`: Task waiting for an external condition, manages task dependencies:
   - Parent task waiting for child tasks to complete (suspend reason `awaiting_subtasks`, auto-resumed by the system).
   - Task explicitly suspended for external interaction such as human approval (custom suspend reason, resumed via `resumeTask`).
@@ -60,12 +61,23 @@ Tasks follow these state transition rules:
 5. Explicit Suspension Transitions (human-in-the-loop)
    - `running` → `suspended`: Handler returns `task.suspend({ reason })` for external interaction (e.g. approval)
    - `suspended` → `pending`: `resumeTask(taskId)` — handler re-runs with an advanced stage
-   - `suspended` → `permanently_failed`: `cancelTask(taskId, { reason })` — approval rejected / request abandoned
+   - `suspended` → `cancelled`: `cancelTask(taskId, { reason })` — approval rejected / request abandoned
    - Explicitly suspended tasks are immune to heartbeat and total timeouts; they never auto-resume.
+
+6. Cancellation Transitions
+   - `pending` / `paused` / `failed` / `timeout` / `suspended` → `cancelled`: `cancelTask()` or `cancelCron()`
+   - `running` → `cancelled` is **rejected**: the in-flight handler owns the row. Pause first, or wait for completion.
+   - `cancelled` is a terminal outcome, not a failure: it never propagates failure to a parent workflow and is excluded from `failed_tasks` in workflow summaries.
 
 6. Recovery Transitions
    - `paused` → `pending`: Manually resume a paused cron task
     - `running` → `pending`: Task ownership is recovered after the owning worker becomes dead or superseded
+
+7. Cron Round Semantics
+   - A cron row moves `running` → `pending` at the end of each round, with `next_run_time` recomputed from the persisted `cron_expr` / `cron_tz`.
+   - A successful round resets `retry_count` to `0` and clears `error`: the retry budget covers attempts inside one round, not the lifetime of the schedule.
+   - Re-registering a schedule (`cron()` with the same `(name, cronKey)`) updates the row in place. A `paused` or `cancelled` row is revived to `pending` with a fresh retry budget.
+   - With `catchUp: 'skip'`, a round whose scheduled instant is at least one full period in the past is skipped: the attempt is recorded with outcome `skipped`, `next_run_time` advances, and a `task_cron_missed` event is written. The default `'once'` runs the missed window immediately.
 
 Recovery notes:
 - `running -> pending` caused by worker recovery is not treated as a normal retry-failure transition.
@@ -86,6 +98,7 @@ graph LR
     permanently_failed[Permanently Failed]
     paused[Paused]
     suspended[Suspended]
+    cancelled[Cancelled]
     
     %% Basic transitions
     pending --> |"claim"| running
@@ -110,7 +123,14 @@ graph LR
     %% Explicit suspension (human-in-the-loop)
     running --> |"task.suspend()"| suspended
     suspended --> |"resumeTask()"| pending
-    suspended --> |"cancelTask()"| permanently_failed
+    suspended --> |"cancelTask()"| cancelled
+
+    %% Cancellation
+    pending --> |"cancelTask()"| cancelled
+    paused --> |"cancelTask()"| cancelled
+    failed --> |"cancelTask()"| cancelled
+    timeout --> |"cancelTask()"| cancelled
+    cancelled --> |"re-register schedule"| pending
     
     %% Recovery
     paused --> |"manual resume"| pending
@@ -127,6 +147,7 @@ graph LR
     class failed,timeout warning
     class permanently_failed error
     class paused info
+    class cancelled info
 ```
 
 ## Task Types

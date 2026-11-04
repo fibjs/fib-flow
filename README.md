@@ -6,10 +6,15 @@ A powerful workflow management system built on fibjs for orchestrating complex t
 
 - **Workflow Management**: Parent-child task relationships, automatic state propagation
 - **Task Types**: Async tasks and cron jobs with priorities and delays
+- **Idempotent Scheduling**: `cron()` upserts per `(name, cronKey)`, so restarts and multi-instance boots never duplicate triggers
+- **Schedule Control**: `cancelCron()` / `cancelTask()` stop schedules without pretending they failed; `getCronSchedules()` and `pruneCronSchedules()` expose orphaned rows
+- **Per-Schedule Time Zones**: IANA `timezone` per cron job, validated at registration
+- **Catch-Up Policy**: `catchUp: 'once'` runs a missed window, `'skip'` advances past it with an audit trail
 - **State Management**: Comprehensive task lifecycle and state transitions
 - **Human-in-the-Loop**: Explicit task suspension (`task.suspend()`) for external interaction (e.g. approval), resumed later via `resumeTask`/`cancelTask` with resume data
 - **Hot Reload**: Update or remove handlers at runtime without restarting workers
 - **Reliability**: Automatic retries, timeout protection, transaction safety
+- **Retention**: Global window plus per-row `retention_expire_time` overrides
 - **Worker Recovery**: Reclaim `running` jobs from dead or superseded workers through the `fib_flow_workers` registry
 - **Execution Audit**: Persisted task events, attempts, workflow timelines, and handler checkpoints
 - **Database Support**: SQLite/MySQL/PostgreSQL with flexible connection options
@@ -123,6 +128,28 @@ const pendingApprovals = taskManager.getTasksByStatus('suspended', {
 });
 ```
 
+Schedule management:
+
+```javascript
+// Idempotent: re-registering the same (name, cronKey) updates the existing row
+taskManager.cron('nightly_report', '0 3 * * *', payload, {
+    cronKey: 'default',
+    timezone: 'Asia/Shanghai',
+    catchUp: 'skip',
+    retention_expire_time: 90 * 86400
+});
+
+// Inspect schedules, including rows whose handler is no longer registered
+const schedules = taskManager.getCronSchedules();
+const stats = taskManager.getCronScheduleStats();   // { total, active, paused, cancelled, orphan }
+
+// Stop a schedule deliberately (recorded as `cancelled`, not as a failure)
+taskManager.cancelCron({ name: 'nightly_report' });
+
+// Reclaim schedules whose handler was removed
+taskManager.pruneCronSchedules();
+```
+
 Hot reload semantics:
 
 - A task attempt that is already executing keeps the handler version captured when it started.
@@ -136,6 +163,39 @@ Worker recovery semantics:
 - When `pod_id` is configured, fib-flow records worker liveness in `fib_flow_workers`.
 - If a worker becomes dead or is superseded by a newer worker from the same `pod_id`, its `running` tasks can be reclaimed without waiting for task timeout.
 - Running-task updates are ownership-fenced by `worker_id`, so stale workers cannot safely write back after recovery.
+
+## TypeScript
+
+The package ships declarations out of the box (`"types": "index.d.ts"`), so no
+`@types/*` package is needed:
+
+```typescript
+import { TaskManager, type TaskRecord, type CronOptions } from 'fib-flow';
+
+const taskManager = new TaskManager({ dbConnection: 'sqlite::memory:' });
+taskManager.db.setup();
+
+taskManager.cron('nightly_report', '0 3 * * *', { region: 'eu' }, {
+    cronKey: 'eu',
+    timezone: 'Asia/Shanghai',
+    catchUp: 'skip'
+});
+
+const task: TaskRecord | null = taskManager.getTask(1);
+```
+
+What the declarations cover:
+
+- `TaskManager` — every public method with its real return type (`resumeTask`, `pauseTask` and `cancelTask` return the updated row; the query APIs return typed rows and paged results).
+- Handler contract — `TaskHandlerTask<T>` types `task.payload` from the handler's generic and includes `checkTimeout()`, `audit()`, `progress()` and `suspend()`; the second argument is the typed `next` sub-task factory.
+- Options — `TaskManagerOptions`, `TaskOptions`, `CronOptions` (`cronKey`, `timezone`, `catchUp`, `retention_expire_time`).
+- Records — `TaskRecord`, `TaskEventRecord`, `TaskAttemptRecord`, `WorkerRecord`, `CronSchedule`, `CronScheduleStats`, `WorkflowAuditSummary`, and the retention/result shapes.
+- Adapter surface — `DatabaseAdapter` plus `createAdapter()` and the three engine classes.
+
+Keeping declarations honest is part of the build: `fibjs --check` type-checks the
+declarations (`skipLibCheck: false`) together with `test/types/contract.ts`, a
+compile-time contract test full of positive and `@ts-expect-error` assertions. A
+drift between runtime and declaration fails the check with a non-zero exit code.
 
 ## Documentation
 
@@ -153,6 +213,7 @@ Worker recovery semantics:
 
 ### Reference
 - [API Documentation](docs/api-reference.md)
+- [TypeScript Support](docs/typescript.md)
 - [Retention Policy](docs/audit-retention-policy.md)
 - [Execution Audit Events](docs/execution-audit-events.md)
 - [Cron Syntax Guide](docs/cron-syntax.md)

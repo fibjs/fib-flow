@@ -682,6 +682,81 @@ describe("TaskManager DB Connection", () => {
                 assert.equal(adapter.getTask(pausedTaskId), null);
             });
 
+            it("should apply row-level retention independently from the global window", () => {
+                const now = Math.floor(Date.now() / 1000);
+
+                const longLivedId = adapter.insertTask({
+                    name: "retention_row_long",
+                    type: "async",
+                    retention_expire_time: 90 * 86400
+                });
+                adapter.claimTask(["retention_row_long"], "retention-worker");
+                adapter.updateTaskStatus(longLivedId, 'completed');
+                directUpdateTaskProperty(adapter, longLivedId, 'last_active_time', now - 60 * 86400);
+
+                const shortLivedId = adapter.insertTask({
+                    name: "retention_row_short",
+                    type: "async"
+                });
+                adapter.claimTask(["retention_row_short"], "retention-worker");
+                adapter.updateTaskStatus(shortLivedId, 'completed');
+                directUpdateTaskProperty(adapter, shortLivedId, 'last_active_time', now - 2 * 86400);
+
+                const cleanup = adapter.cleanupExpiredTasks({ expire_time: 86400, now });
+
+                // The 90-day row survives its own window; the global row expires.
+                assert.ok(adapter.getTask(longLivedId), 'row with a 90-day window must be kept');
+                assert.equal(adapter.getTask(shortLivedId), null);
+                assert.equal(cleanup.tasks_deleted_by_row_policy, 0);
+                assert.equal(cleanup.tasks_deleted_by_global_policy, 1);
+            });
+
+            it("should delete an expired row policy regardless of status filters", () => {
+                const now = Math.floor(Date.now() / 1000);
+
+                const pausedId = adapter.insertTask({
+                    name: "retention_row_paused",
+                    type: "cron",
+                    cron_expr: "0 9 * * *",
+                    status: "paused",
+                    retention_expire_time: 3600
+                });
+                directUpdateTaskProperty(adapter, pausedId, 'last_active_time', now - 7200);
+
+                // `paused` is not in the global status set; the row window still applies.
+                const cleanup = adapter.cleanupExpiredTasks({
+                    expire_time: 86400,
+                    statuses: ['completed'],
+                    now
+                });
+
+                assert.equal(adapter.getTask(pausedId), null);
+                assert.equal(cleanup.tasks_deleted_by_row_policy, 1);
+            });
+
+            it("should inherit the parent retention window for child tasks", () => {
+                const parentId = adapter.insertTask({
+                    name: "retention_parent",
+                    type: "async",
+                    retention_expire_time: 7 * 86400
+                });
+                adapter.claimTask(["retention_parent"], "retention-worker");
+
+                const childId = adapter.insertTask({
+                    name: "retention_child",
+                    type: "async",
+                    retention_expire_time: 7 * 86400
+                }, {
+                    root_id: parentId,
+                    parent_id: parentId,
+                    worker_id: "retention-worker"
+                });
+
+                const child = adapter.getTask(childId);
+                assert.equal(child.retention_expire_time, 7 * 86400);
+                assert.equal(child.parent_id, parentId);
+            });
+
             it("should clean expired tasks in small batches while draining explicit retention", () => {
                 const now = Math.floor(Date.now() / 1000);
                 const taskIds = [];
@@ -1121,9 +1196,10 @@ describe("TaskManager DB Connection", () => {
             });
 
             it("should handle invalid delete parameters gracefully", () => {
-                // Test with empty filters object
-                const deletedCount = adapter.deleteTasks({});
-                assert.ok(typeof deletedCount === 'number');
+                // Empty filters must be rejected: wiping the table requires clearTasks()
+                assert.throws(() => {
+                    adapter.deleteTasks({});
+                }, /at least one filter/);
 
                 // Test with invalid status
                 assert.throws(() => {

@@ -130,6 +130,47 @@ const taskManager = new TaskManager({
 taskManager.db.setup(); // Initialize database schema
 ```
 
+## Schema Version Gate
+
+`setup()` records the schema version in `fib_flow_meta` and validates it on every
+call:
+
+```sql
+CREATE TABLE fib_flow_meta (
+    meta_key   VARCHAR(64) PRIMARY KEY,
+    meta_value TEXT
+);
+```
+
+Behaviour:
+
+- Fresh database → tables are created and `schema_version = 2` is written.
+- Matching version → `setup()` is a no-op.
+- Mismatched version, or an unmarked `fib_flow_tasks` table that already contains
+  rows → `setup()` **throws** instead of degrading silently:
+
+  ```
+  fib-flow schema v1 is not supported; expected v2.
+  Drop the fib_flow_* tables and re-run setup() to rebuild them.
+  ```
+
+fib-flow does not migrate column layouts in place. Recreating the tables is the
+supported upgrade path, which is why the failure is explicit and loud.
+
+Schema v2 columns relevant to scheduling:
+
+| Column | Purpose |
+| --- | --- |
+| `cron_key` | Schedule identity key; unique together with `name`. `NULL` on async rows, which is why same-name async tasks still coexist. |
+| `cron_tz` | IANA time zone used to evaluate `cron_expr`; `NULL` means the process zone. |
+| `cron_catch_up` | `once` (default) or `skip`. |
+| `retention_expire_time` | Per-row retention window in seconds; `NULL` falls back to the global policy. |
+
+Indexes added with v2:
+
+- `ux_task_cron_identity (name, cron_key)` — unique; enforces one row per schedule.
+- `idx_task_retention (status, last_active_time)` — backs the global retention sweep.
+
 ### Single-Instance Use Cases
 
 This feature is particularly beneficial for single-instance, in-process scenarios where:

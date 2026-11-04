@@ -74,3 +74,41 @@ Here are some common use cases with explanations:
   - Bi-monthly scheduled tasks
 
 For more complex scheduling scenarios, consult the [cron-parser documentation](https://github.com/harrisiirak/cron-parser).
+
+## Time Zones
+
+By default an expression is evaluated in the process time zone. To pin a schedule
+to a specific zone, pass an IANA name:
+
+```javascript
+taskManager.cron('daily_digest', '0 9 * * *', payload, {
+    timezone: 'Asia/Shanghai'
+});
+```
+
+- The name is validated at registration with `Intl.DateTimeFormat`. An invalid
+  name throws `Invalid timezone: <name> (must be an IANA name such as "Asia/Shanghai")`,
+  so a typo can never silently fall back to the process zone.
+- Offsets such as `UTC+8` are **not** IANA names and are rejected. Use `Asia/Shanghai`.
+- The zone is persisted in the `cron_tz` column, so a schedule keeps firing at
+  09:00 local time even when the worker process runs with a different `TZ`.
+- Daylight-saving gaps roll forward: for `America/New_York` on 2027-03-14 the
+  non-existent local 02:30 resolves to 03:30 EDT. DST-ambiguous instants resolve
+  to the first occurrence.
+- Expressions themselves stay plain cron syntax; the `CRON_TZ=` / `TZ=` prefixes
+  used by some cron implementations are **not** supported.
+
+## Missed Windows
+
+When a worker is down past a scheduled instant, the default behaviour (`catchUp: 'once'`)
+runs that window as soon as the task is claimed. Pass `catchUp: 'skip'` to advance
+past it instead:
+
+```javascript
+taskManager.cron('hourly_sync', '0 * * * *', payload, { catchUp: 'skip' });
+```
+
+With `skip`, the round is recorded as an attempt with outcome `skipped`, a
+`task_cron_missed` audit event reports how many windows were dropped, and the next
+run time moves into the future. A delay shorter than one full period is treated as
+normal jitter and still runs.

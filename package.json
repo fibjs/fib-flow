@@ -1,6 +1,6 @@
 {
   "name": "fib-flow",
-  "version": "6.2.4",
+  "version": "8.0.0",
   "description": "A robust workflow management system for fibjs with task orchestration, state management, and distributed execution capabilities",
   "main": "lib/index.js",
   "scripts": {
@@ -32,5 +32,6 @@
   "repository": {
     "type": "git",
     "url": "https://github.com/fibjs/fib-flow"
-  }
+  },
+  "types": "index.d.ts"
 }

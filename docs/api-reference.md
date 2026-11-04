@@ -254,18 +254,75 @@ Tasks can be created in two modes: async (one-time) tasks and cron (scheduled) t
  * @param {number} [options.max_retries] Max retry attempts
  * @param {number} [options.retry_interval] Retry interval in seconds
  * @param {string} [options.tag] Task tag for categorization
+ * @param {number} [options.retention_expire_time] Per-task retention window in seconds
+ * @returns {number} Task id
  */
 async(taskName, payload, options)
 
 /**
- * Create a cron task
+ * Create or update a cron schedule
  * @param {string} taskName Task type
  * @param {string} cronExpr Cron expression
  * @param {Object} payload Task data
- * @param {Object} options Same as async task options
+ * @param {Object} options Task options
+ * @param {string} [options.cronKey='default'] Schedule identity key
+ * @param {string} [options.timezone] IANA time zone used to evaluate the expression
+ * @param {string} [options.catchUp='once'] 'once' runs a missed window immediately, 'skip' advances past it
+ * @param {number} [options.retention_expire_time] Per-schedule retention window in seconds
+ * @returns {number} Task id
  */
 cron(taskName, cronExpr, payload, options)
 ```
+
+#### Idempotent cron registration
+
+`cron()` is idempotent per `(taskName, cronKey)`: calling it again from a restarted
+process, another instance, or a config reload updates the existing row instead of
+creating a duplicate trigger.
+
+```javascript
+// First call inserts, later calls update the same row.
+taskManager.cron('nightly_report', '0 3 * * *');
+taskManager.cron('nightly_report', '0 4 * * *');   // same row, expression updated
+
+// Same handler name can host independent schedules via distinct keys.
+taskManager.cron('nightly_report', '0 3 * * *', { region: 'eu' }, { cronKey: 'eu' });
+taskManager.cron('nightly_report', '0 3 * * *', { region: 'us' }, { cronKey: 'us' });
+```
+
+Update semantics:
+
+- `cron_expr` / `cron_tz` unchanged → `next_run_time` is preserved, so a restart never postpones the next run.
+- `cron_expr` / `cron_tz` changed → `next_run_time` is recomputed immediately.
+- `paused` / `cancelled` row → revived to `pending` with `retry_count = 0` and an audit event (`task_resumed`, `resume_reason: 'schedule_reregistered'`).
+- `failed` / `timeout` row → treated as an in-flight retry chain: scheduling fields update, retry budget is untouched.
+
+A changed expression also takes effect for the round that is currently running: the
+completion path re-reads the persisted schedule rather than trusting the value
+captured at claim time.
+
+#### Time zones
+
+```javascript
+taskManager.cron('daily_digest', '0 9 * * *', {}, {
+    timezone: 'Asia/Shanghai' // IANA name, validated at registration
+});
+```
+
+- `timezone` is validated with `Intl.DateTimeFormat`; an invalid name throws `Invalid timezone: ...` instead of silently falling back to the process zone.
+- Omitted → the expression is evaluated in the process time zone (unchanged behaviour).
+- Daylight-saving gaps are handled by `cron-parser`: a non-existent local instant rolls forward. For `America/New_York` on 2027-03-14, `30 2 * * *` fires at 03:30 EDT.
+
+#### Catch-up policy
+
+```javascript
+taskManager.cron('hourly_sync', '0 * * * *', {}, { catchUp: 'skip' });
+```
+
+- `once` (default): a missed window runs once, as soon as capacity allows.
+- `skip`: a window that is at least one full period late is skipped. The round still gets an attempt row (`outcome: 'skipped'`), `next_run_time` advances past it, and a `task_cron_missed` event records how many windows were dropped.
+- Delays shorter than one period are normal jitter and always run.
+- The check happens after claiming, so it also covers gaps that occur while the manager is running (handler unregistered, worker recovery, database stalls), not just process restarts.
 
 ### Task Control
 Task control methods provide ways to manage the TaskManager instance and individual task execution.
@@ -303,12 +360,25 @@ resume()
 resumeTask(taskId, options)
 
 /**
- * Cancel a suspended task, permanently failing it (e.g. approval rejected)
+ * Cancel a task (e.g. approval rejected, request abandoned, schedule removed)
  * @param {string} taskId Task ID
  * @param {Object} [options] Cancel options
  * @param {string} [options.reason] Cancellation reason stored as the task error
+ * @throws {Error} If the task does not exist, or is currently running
  */
 cancelTask(taskId, options)
+
+/**
+ * Cancel cron schedules selected by identity filter
+ * @param {Object} [filters] Selector; at least one of name / cronKey / tag is required
+ * @param {string} [filters.name] Task name
+ * @param {string} [filters.cronKey] Schedule identity key
+ * @param {string} [filters.tag] Task tag
+ * @param {Object} [options] Cancel options
+ * @param {string} [options.reason] Cancellation reason
+ * @returns {{cancelled:number, skipped:number, taskIds:Array<number>}}
+ */
+cancelCron(filters, options)
 
 /**
  * Pause a specific running task by ID
@@ -319,9 +389,17 @@ pauseTask(taskId)
 /**
  * Run retention cleanup for expired terminal tasks and their audit records
  * @param {Object} [policy] Optional retention policy override
+ * @returns {Object} Deletion counters, split by row-level and global policy
  */
 runRetention(policy)
 ```
+
+Cancellation notes:
+
+- `cancelled` is a distinct status. It is not a failure: the row never propagates failure to a parent workflow and is excluded from `failed_tasks` in `getWorkflowAuditSummary()`.
+- Allowed source states are `pending`, `paused`, `failed`, `timeout` and `suspended`. Cancelling a `running` task is rejected — pause it first, or wait for completion.
+- `cancelTask()` throws `Task <id> not found` for an unknown id, instead of failing deeper in the database layer.
+- Cancelled rows are removed by the default retention policy (`statuses` defaults to `completed`, `permanently_failed`, `cancelled`).
 
 `expire_time` remains supported as a backward-compatible shortcut. Prefer `retention` when you need explicit control over retention statuses or want to make the cleanup policy obvious in configuration.
 
@@ -349,6 +427,15 @@ getTasksByTag(tag)
 // Get task statistics by tag
 getTaskStatsByTag(tag, status)
 
+// List cron schedules (includes an orphan flag when the handler is gone)
+getCronSchedules(filters)
+
+// Aggregate cron schedule counters
+getCronScheduleStats()
+
+// Cancel pending schedules whose handler is no longer registered
+pruneCronSchedules()
+
 // Delete tasks with multiple filter conditions
 deleteTasks(filters)
 ```
@@ -365,6 +452,7 @@ The `getTasks` method provides flexible task querying with multiple filter condi
  * @param {string} [filters.tag] Filter by tag
  * @param {string} [filters.status] Filter by status ("pending", "running", "completed", etc)
  * @param {string} [filters.name] Filter by task name
+ * @param {string} [filters.type] Filter by task type ("async" | "cron")
  * @returns {Array<Object>} Array of matching tasks
  */
 getTasks(filters)
@@ -604,8 +692,9 @@ The `deleteTasks` method provides flexible task deletion with multiple filter co
  * @param {string} [filters.tag] Filter by tag
  * @param {string} [filters.status] Filter by status ("pending", "running", "completed", etc)
  * @param {string} [filters.name] Filter by task name
+ * @param {string} [filters.type] Filter by task type ("async" | "cron")
  * @returns {number} Number of tasks deleted
- * @throws {Error} If status is invalid
+ * @throws {Error} If no filter is provided, or a filter value is invalid
  */
 deleteTasks(filters)
 ```
@@ -619,8 +708,8 @@ const deletedCount = taskManager.deleteTasks({ tag: "cleanup" });
 // Delete completed tasks
 const deletedCompleted = taskManager.deleteTasks({ status: "completed" });
 
-// Delete tasks of a specific type
-const deletedByName = taskManager.deleteTasks({ name: "processImage" });
+// Delete all cron schedules
+const deletedCrons = taskManager.deleteTasks({ type: "cron" });
 
 // Delete tasks matching multiple conditions
 const deletedMulti = taskManager.deleteTasks({
@@ -628,16 +717,13 @@ const deletedMulti = taskManager.deleteTasks({
     status: "failed",
     name: "videoProcess"
 });
-
-// Delete all tasks (empty filter)
-const deletedAll = taskManager.deleteTasks({});
 ```
 
 Filter Behavior:
 - Multiple filters are combined with AND logic
 - If a filter is not provided, that condition is not applied
-- Empty filters object deletes all tasks
-- Invalid filter values will throw an error for status, but be ignored for tag and name
+- **An empty filter object throws.** Wiping the table requires the explicit `clearTasks()` API, so a typo cannot silently destroy the audit trail.
+- Invalid filter values will throw an error for status and type, but be ignored for tag and name
 
 Status Values:
 - pending: Task waiting to be executed
@@ -648,6 +734,7 @@ Status Values:
 - permanently_failed: Failed task that exceeded retry attempts
 - paused: Task manually paused
 - suspended: Task waiting for an external condition (children completion, or explicit suspend/resume)
+- cancelled: Task or schedule explicitly cancelled by an operator
 
 ### Task Lifecycle
 Task handlers receive task objects that contain comprehensive information about the task and provide methods for controlling task execution.
@@ -661,6 +748,7 @@ Task Status Values:
 - `permanently_failed`: Async task that has failed and exceeded retry attempts
 - `paused`: Cron task that has failed and exceeded retry attempts
 - `suspended`: Parent task waiting for child tasks, or task explicitly suspended for external interaction (resumed via `resumeTask`)
+- `cancelled`: Task or cron schedule explicitly cancelled (terminal, not counted as a failure)
 
 Task Stage:
 - Stage is a numeric value starting from 0

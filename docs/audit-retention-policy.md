@@ -18,9 +18,11 @@ Not included in the current scope:
 
 - archive tables
 - cold storage export
-- separate retention windows for tasks, events, and attempts
+- separate retention windows for events and attempts
 - post-archive degraded query semantics
 - summary materialization for deleted workflows
+
+Per-task windows *are* supported through the row-level `retention_expire_time` option (see [Row-Level Retention Windows](#row-level-retention-windows)).
 
 Current implementation note:
 
@@ -58,11 +60,16 @@ Currently supported statuses:
 - `completed`
 - `permanently_failed`
 - `paused`
+- `cancelled`
 
 Default statuses:
 
 - `completed`
 - `permanently_failed`
+- `cancelled`
+
+`cancelled` is included by default: cancelling a schedule is meant to remove the
+schedule, so the cancelled row should age out with the rest of the terminal rows.
 
 ## Why `paused` Is Not in the Default Set
 
@@ -70,12 +77,34 @@ Default statuses:
 
 For that reason, the default retention policy does not automatically delete paused tasks. If a deployment wants paused tasks to expire automatically, it must opt in explicitly.
 
+## Row-Level Retention Windows
+
+A single global window cannot express per-schedule audit requirements. Rows can
+carry their own window:
+
+```javascript
+taskManager.cron('compliance_export', '0 2 * * *', payload, {
+    retention_expire_time: 365 * 86400
+});
+
+taskManager.async('temp_import', payload, {
+    retention_expire_time: 3 * 86400
+});
+```
+
+Semantics:
+
+- Non-null `retention_expire_time` → the row is deleted when `last_active_time < now - retention_expire_time`, **regardless of status** and regardless of the global `statuses` filter.
+- `NULL` → the global window and status filter apply, exactly as before.
+- Child tasks created through `next([...])` inherit the parent window when they are created from a parent that defines one.
+- Cleanup returns `tasks_deleted_by_row_policy` and `tasks_deleted_by_global_policy` so per-policy deletions stay observable.
+
 ## Cleanup Semantics
 
 Retention cleanup is task-centric and lifecycle-consistent:
 
-1. identify expired tasks whose `last_active_time` is older than `now - expire_time`
-2. restrict candidates to the configured terminal statuses
+1. identify rows whose own `retention_expire_time` has elapsed, and rows without a row-level window whose `last_active_time` is older than `now - expire_time`
+2. restrict the global-window candidates to the configured terminal statuses
 3. delete the corresponding audit events
 4. delete the corresponding attempts
 5. delete the task rows themselves
@@ -97,7 +126,9 @@ console.log(result);
 // {
 //   tasks_deleted: 10,
 //   events_deleted: 84,
-//   attempts_deleted: 12
+//   attempts_deleted: 12,
+//   tasks_deleted_by_row_policy: 2,
+//   tasks_deleted_by_global_policy: 8
 // }
 ```
 
