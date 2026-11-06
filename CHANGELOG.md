@@ -74,8 +74,24 @@ upgrading changes no behaviour until `cronMode` is set explicitly.
   `error = NULL` while every round failed — a consumer reading `last_error` would
   show "active, no errors" forever. The run's failure text is now mirrored onto the
   schedule's `error` (`task_cron_run_failed` / `task_cron_run_recovered` events),
-  and a later successful round clears it. The status deliberately stays `pending`
-  because the schedule keeps firing.
+  and only a run that actually **succeeds** clears it. Clearing at spawn time
+  instead would blank the signal for the whole duration of each run: with a
+  handler slower than its period, a permanently failing schedule looked healthy
+  18 out of 24 samples. The status deliberately stays `pending` because the
+  schedule keeps firing.
+- **Run ↔ schedule links are exact.** In-flight counting and outcome reporting
+  match the runs a schedule actually spawned (a `schedule_task_id` marker on the
+  run's `task_created` event), not `name` + `tag`. With one handler name, a task
+  enqueued by hand shares both: a long manual run would freeze the schedule for
+  its whole duration (measured: one 4s manual run, zero cron rounds, six
+  `overlap_skipped`), and a failing manual run would overwrite the schedule's
+  `last_error`. Two schedules sharing `name` + `tag` and differing only by
+  `cron_key` starved each other the same way (6 runs instead of 12).
+- **The outcome signal is written once per state change.** Appending a round event
+  on every failing round would put them on a row retention never collects — the
+  same unbounded shape the earlier spawn-event cap fixed, just under another event
+  name. `task_cron_run_failed` / `task_cron_run_recovered` are now both deduplicated
+  and part of the capped round-event family.
 - **The round payload is the schedule payload, verbatim.** fib-flow does not
   flatten or validate it.
 - **Spawn failures do not stall the schedule.** `next_run_time` advances, the
@@ -101,7 +117,7 @@ upgrading changes no behaviour until `cronMode` is set explicitly.
 
 ### Test suite
 
-- Verified against SQLite, PostgreSQL 16 and MySQL 8.0 (227 passing, 1 skipped on
+- Verified against SQLite, PostgreSQL 16 and MySQL 8.0 (233 passing, 1 skipped on
   each; `FIB_FLOW_TEST_DB` selects the backend).
 - Two pre-existing tests were made deterministic. Both timed on wall-clock
   seconds and failed intermittently on the network backends:
@@ -114,7 +130,7 @@ upgrading changes no behaviour until `cronMode` is set explicitly.
     reach `pending` only. A cron row also passes through `pending` between
     "children completed" and "the round's final execution", where `result` still
     holds the child entries. It now waits for the round result.
-- The spawn suite runs in `test/cron_spawn_test.js` (28 cases).
+- The spawn suite runs in `test/cron_spawn_test.js` (34 cases).
 
 ## 8.0.1
 

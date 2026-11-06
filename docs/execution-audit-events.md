@@ -86,7 +86,8 @@ Events and attempts complement each other:
 - A completed or failed attempt is the authoritative source for duration and outcome analysis.
 - When a running task is reclaimed because its owner worker is dead or superseded, the open attempt is closed with outcome `interrupted` and the audit stream emits `task_recovered`.
 - In `cronMode: 'spawn'`, a schedule round is **not** an execution: no attempt row is opened and no `task_claimed` / `task_started` events are written. The round is visible through `task_cron_spawned`, and the spawned run row keeps the normal attempt trail. This is deliberate — schedule rows are never collected by retention (`pending` is outside the retention status gate), so per-round attempt and claim rows would grow without bound.
-- Per-round schedule events (`task_cron_spawned`, `task_cron_spawn_failed`, `task_cron_missed`) are capped at the 20 most recent rows per schedule. Treat the spawned run rows as the authoritative round history; the schedule trail only answers "is this schedule still firing, and which run came last".
+- Per-round schedule events (`task_cron_spawned`, `task_cron_spawn_failed`, `task_cron_missed`, `task_cron_overlap_skipped`, `task_cron_run_failed`, `task_cron_run_recovered`) are capped at the 20 most recent rows per schedule. Treat the spawned run rows as the authoritative round history; the schedule trail only answers "is this schedule still firing, and which run came last".
+- `task_cron_run_failed` / `task_cron_run_recovered` are also written only when the schedule's `error` actually changes. A permanently failing schedule holds one signal, not one event per round — the per-round history lives on the run rows.
 
 ## Snapshot Cache Fields
 

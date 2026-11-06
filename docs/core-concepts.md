@@ -238,12 +238,18 @@ Properties that hold in `spawn` mode:
   `task_cron_overlap_skipped` event is recorded, but no run row is created and
   `error` stays untouched (an overlap skip is not a failure). Pass
   `maxInstances: 0` to allow unbounded overlap.
+  The count only includes runs **this schedule spawned**: a task you enqueue
+  yourself under the same handler name neither blocks the schedule nor writes to
+  its `last_error`. Two schedules that share `name` + `tag` and differ only by
+  `cron_key` are likewise counted separately.
 - **A failing round leaves its reason on the schedule row.** The failure itself
   lands on the run row (`status: 'failed'`), but the reason is mirrored onto the
   schedule's `error`, so `getCronSchedules()[].last_error` does not stay empty
-  while every round fails. The next successful round clears it. Note that the
-  schedule status stays `pending` — it keeps firing — so a consumer deciding
-  "is this schedule healthy?" must read `last_error`, not only `status`.
+  while every round fails. It is cleared when a run actually **succeeds**, not
+  when the next round starts — otherwise a slow handler would leave the signal
+  blank for the whole duration of each run. Note that the schedule status stays
+  `pending` — it keeps firing — so a consumer deciding "is this schedule healthy?"
+  must read `last_error`, not only `status`.
 - **Handler concurrency limits do not starve the schedule.** `max_concurrent_tasks`
   gates runs, not the schedule tick.
 - **An orphan schedule does not spawn.** If a schedule's handler is no longer
