@@ -574,6 +574,77 @@ describe('Cron spawn mode', () => {
         assert.equal(schedule.result, null, 'the schedule result must stay untouched');
     });
 
+    it('should not spawn runs for an orphan schedule', () => {
+        // An orphan schedule (handler removed, row still `pending`) must not spawn:
+        // the run rows would carry a name nobody registered, so they can never be
+        // claimed, never reach a terminal state, and never become retention
+        // candidates. Inline mode is immune because `claimTask` already filters on
+        // the registered name list — this leak is specific to spawn.
+        taskManager.use('spawn_orphan_job', () => 'orphan');
+        taskManager.use('spawn_orphan_peer', () => 'peer');
+        taskManager.db.setup();
+
+        taskManager.cron('spawn_orphan_job', '* * * * * *', {});
+        taskManager.cron('spawn_orphan_peer', '* * * * * *', {});
+
+        // Simulate "definition deleted, cancelCron never ran" (crash in between, or
+        // a partially failed definition load).
+        taskManager.unuse('spawn_orphan_job');
+        taskManager.start();
+
+        try {
+            assert.ok(
+                waitFor(() => taskManager.getTasks({ name: 'spawn_orphan_peer', type: 'async' }).length >= 2, 12000),
+                'the registered schedule must keep spawning'
+            );
+
+            const [schedule] = taskManager.getCronSchedules({ name: 'spawn_orphan_job' });
+            assert.equal(schedule.orphan, true, 'the schedule must be reported as orphaned');
+
+            assert.equal(
+                taskManager.getTasks({ name: 'spawn_orphan_job', type: 'async' }).length,
+                0,
+                'an orphan schedule must not create run rows that can never be claimed'
+            );
+        } finally {
+            taskManager.stop();
+        }
+    });
+
+    it('should resume an orphan schedule once its handler is registered again', () => {
+        // The guard must not turn "leak" into "permanently dead schedule": a
+        // re-registered handler has to pick the schedule back up.
+        taskManager.use('spawn_orphan_resume', () => 'resumed');
+        taskManager.db.setup();
+
+        const scheduleId = taskManager.cron('spawn_orphan_resume', '* * * * * *', {});
+        taskManager.unuse('spawn_orphan_resume');
+        taskManager.start();
+
+        try {
+            coroutine.sleep(2000);
+            assert.equal(
+                taskManager.getTasks({ name: 'spawn_orphan_resume', type: 'async' }).length,
+                0,
+                'no runs while orphaned'
+            );
+            assert.equal(taskManager.getTask(scheduleId).status, 'pending', 'the row stays pending, not cancelled');
+
+            // Handler comes back.
+            taskManager.use('spawn_orphan_resume', () => 'resumed');
+
+            assert.ok(
+                waitFor(() => {
+                    const runs = taskManager.getTasks({ name: 'spawn_orphan_resume', type: 'async' });
+                    return runs.some(run => run.status === 'completed');
+                }, 12000),
+                'the schedule must resume once a handler is registered again'
+            );
+        } finally {
+            taskManager.stop();
+        }
+    });
+
     it('should not regress the inline path', () => {
         // Same handler, same expression, default mode: the schedule row runs it and
         // no async row appears. This pins "8.1.0 is additive".
