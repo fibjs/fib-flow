@@ -11,6 +11,7 @@ This section provides practical examples of using fib-flow in different scenario
   - [Daily Tasks](#daily-tasks)
   - [Weekly Tasks](#weekly-tasks)
   - [Monthly Tasks](#monthly-tasks)
+  - [Scheduled Work With Independent Runs (spawn mode)](#scheduled-work-with-independent-runs-spawn-mode)
 - [Workflow Examples](#workflow-examples)
   - [Simple Workflow](#simple-workflow)
   - [Error Handling and Retry](#error-handling-and-retry)
@@ -101,6 +102,60 @@ taskManager.cron('monthlyCleanup', '0 0 1 * *', {
 });
 ```
 This example demonstrates a monthly cleanup task with retry logic for improved reliability.
+
+### Scheduled Work With Independent Runs (spawn mode)
+
+By default a cron row runs the handler itself, which means the schedule and the
+run share one row: the round's `result` overwrites the previous one, and a handler
+that suspends freezes the whole schedule. Set `cronMode: 'spawn'` when you need
+every round to be its own task — so a run can suspend, retry, be audited and be
+collected independently.
+
+```javascript
+const taskManager = new TaskManager({
+    dbConnection: 'sqlite:jobs.db',
+    cronMode: 'spawn'
+});
+
+taskManager.use('refreshCatalog', async (task) => {
+    // One async row per round. task.payload is the schedule payload, verbatim.
+    return refresh(task.payload.scope);
+});
+
+// The schedule row stores exactly the payload the handler expects.
+taskManager.cron('refreshCatalog', '*/10 * * * *', { scope: 'all' });
+
+taskManager.start();
+
+// The schedule row stays 'pending' forever; runs come and go independently.
+const [schedule] = taskManager.getCronSchedules({ name: 'refreshCatalog' });
+console.log(schedule.status);                 // 'pending'
+console.log(schedule.next_run_time);          // advances every round
+
+// Runs are ordinary async tasks: filter by type.
+const runs = taskManager.getTasks({ name: 'refreshCatalog', type: 'async' });
+console.log(runs.length, runs[0].status);
+
+// Which run belongs to the latest round?
+console.log(schedule.last_spawned_task_id);
+
+// Fire one extra round now, without moving next_run_time.
+taskManager.runCronNow(schedule.id);
+```
+
+A handler that waits for a human no longer stops the clock:
+
+```javascript
+taskManager.use('publishDigest', (task) => {
+    if (task.stage === 0) {
+        // This run parks here; the schedule keeps ticking.
+        return task.suspend({ reason: 'awaiting_approval' });
+    }
+    return publish(task.payload);
+});
+
+taskManager.cron('publishDigest', '0 9 * * *', { channel: 'digest' });
+```
 
 ## Workflow Examples
 

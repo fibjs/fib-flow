@@ -48,6 +48,8 @@ Return types follow the runtime exactly:
 | `async()` / `cron()` | the task id (`number`) |
 | `resumeTask()` / `pauseTask()` / `cancelTask()` | the updated `TaskRecord` (or `null` when the row is gone) |
 | `cancelCron()` | `CancelCronResult` — `{ cancelled, skipped, taskIds }` |
+| `runCronNow()` | `CronSpawnResult` — `{ taskId, next_run_time }` |
+| `getCronSchedules()` | `CronSchedule[]`, including `last_spawned_task_id` (spawn mode) |
 | `pruneCronSchedules()` | `PruneCronResult` — `{ cancelled, taskIds }` |
 | `getCronScheduleStats()` | `CronScheduleStats` — `{ total, active, paused, cancelled, orphan }` |
 | `runRetention()` | `TaskRetentionResult` |

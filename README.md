@@ -6,6 +6,7 @@ A powerful workflow management system built on fibjs for orchestrating complex t
 
 - **Workflow Management**: Parent-child task relationships, automatic state propagation
 - **Task Types**: Async tasks and cron jobs with priorities and delays
+- **Cron Execution Modes**: `cronMode: 'spawn'` gives every cron round its own `async` run row, so a suspending or failing round never freezes the schedule
 - **Idempotent Scheduling**: `cron()` upserts per `(name, cronKey)`, so restarts and multi-instance boots never duplicate triggers
 - **Schedule Control**: `cancelCron()` / `cancelTask()` stop schedules without pretending they failed; `getCronSchedules()` and `pruneCronSchedules()` expose orphaned rows
 - **Per-Schedule Time Zones**: IANA `timezone` per cron job, validated at registration
@@ -149,6 +150,32 @@ taskManager.cancelCron({ name: 'nightly_report' });
 // Reclaim schedules whose handler was removed
 taskManager.pruneCronSchedules();
 ```
+
+Cron execution modes:
+
+```javascript
+// Default ('inline'): the cron row runs the handler and resets itself each round.
+// A refreshing dashboard is a typical fit — there is nothing to suspend or audit
+// per round.
+const inline = new TaskManager({ dbConnection: 'sqlite:jobs.db' });
+
+// 'spawn': the cron row never runs business code. Each round inserts an
+// independent async run row and advances the schedule in one transaction, so a
+// round can suspend, retry, be audited and be collected on its own.
+const spawn = new TaskManager({ dbConnection: 'sqlite:jobs.db', cronMode: 'spawn' });
+
+spawn.use('nightly_report', (task) => task.stage === 0
+    ? task.suspend({ reason: 'awaiting_approval' })   // this round parks…
+    : publish(task.payload));                          // …the schedule keeps ticking
+
+spawn.cron('nightly_report', '0 3 * * *', { region: 'eu' });
+```
+
+In spawn mode: the schedule row stays `pending` forever, `result` is never
+overwritten, no attempt or claim-event rows accumulate on it, handler
+`max_concurrent_tasks` gates runs rather than the tick, and
+`getCronSchedules()[].last_spawned_task_id` points at the latest run.
+`runCronNow(scheduleId)` spawns one extra run without moving `next_run_time`.
 
 Hot reload semantics:
 

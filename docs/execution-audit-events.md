@@ -46,6 +46,8 @@ Each event row may contain these fields:
 | `task_resumed` | A schedule re-registration revives a paused/cancelled cron row | `paused/cancelled -> pending` | `resume_reason: 'schedule_reregistered'`, cron key |
 | `task_cron_rescheduled` | A re-registered schedule changes `cron_expr` or `cron_tz` | No status transition; schedule update | previous/new expression, previous/new time zone, previous/new `next_run_time` |
 | `task_cron_missed` | `catchUp: 'skip'` drops a window that is at least one period late | `running -> pending` with an attempt outcome of `skipped` | `skipped_windows`, scheduled run time, next run time |
+| `task_cron_spawned` | `cronMode: 'spawn'` spawns a run row for the round | `running -> pending`; the run row starts its own lifecycle | `spawned_task_id`, `scheduled_run_time`, `next_run_time`, `trigger` (`'cron'` / `'manual'`), `advanced` |
+| `task_cron_spawn_failed` | A spawn round could not create the run row | `running -> pending`; the schedule keeps firing | `error`, `scheduled_run_time`, `next_run_time` |
 | `task_status_changed` | A status change does not map to a dedicated event type | Used for generic transitions such as `running -> suspended` or `suspended -> pending` | retry count, next run time, resume reason |
 | `task_progress` | Handler code calls `task.progress()` | No authoritative status transition; snapshot cache update only | stage name, progress text, progress percent, handler metadata |
 | `task_checkpoint` | Handler code calls `task.audit()` | No authoritative status transition; checkpoint only | checkpoint code, message, handler metadata |
@@ -80,6 +82,8 @@ Events and attempts complement each other:
 - `task_progress` and `task_checkpoint` can attach to an open attempt when one exists.
 - A completed or failed attempt is the authoritative source for duration and outcome analysis.
 - When a running task is reclaimed because its owner worker is dead or superseded, the open attempt is closed with outcome `interrupted` and the audit stream emits `task_recovered`.
+- In `cronMode: 'spawn'`, a schedule round is **not** an execution: no attempt row is opened and no `task_claimed` / `task_started` events are written. The round is visible through `task_cron_spawned`, and the spawned run row keeps the normal attempt trail. This is deliberate — schedule rows are never collected by retention (`pending` is outside the retention status gate), so per-round attempt and claim rows would grow without bound.
+- Per-round schedule events (`task_cron_spawned`, `task_cron_spawn_failed`, `task_cron_missed`) are capped at the 20 most recent rows per schedule. Treat the spawned run rows as the authoritative round history; the schedule trail only answers "is this schedule still firing, and which run came last".
 
 ## Snapshot Cache Fields
 

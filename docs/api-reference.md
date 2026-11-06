@@ -206,6 +206,7 @@ const taskManager = new TaskManager({
     worker_heartbeat_interval: 5000, // Worker registry heartbeat interval
     worker_heartbeat_timeout: 30000, // Worker liveness timeout window in milliseconds
     recover_running_jobs: true, // Reclaim running jobs from dead or superseded workers
+    cronMode: 'inline',         // 'inline' (default) or 'spawn' — see core-concepts.md
     expire_time: 86400,         // Backward-compatible retention shortcut
     retention: {
         expire_time: 86400,
@@ -324,6 +325,36 @@ taskManager.cron('hourly_sync', '0 * * * *', {}, { catchUp: 'skip' });
 - Delays shorter than one period are normal jitter and always run.
 - The check happens after claiming, so it also covers gaps that occur while the manager is running (handler unregistered, worker recovery, database stalls), not just process restarts.
 
+#### Execution modes (`cronMode`)
+
+A cron row is a **schedule**, not a run. `cronMode` decides what a round does:
+
+```javascript
+// Default: 8.0.x semantics, unchanged.
+const inline = new TaskManager({ dbConnection: 'sqlite:jobs.db' });
+
+// Each round spawns an independent async run row; the schedule row never runs code.
+const spawn = new TaskManager({ dbConnection: 'sqlite:jobs.db', cronMode: 'spawn' });
+```
+
+| Aspect | `'inline'` (default) | `'spawn'` |
+|---|---|---|
+| Row that runs the handler | the cron row | a new `async` run row |
+| Round outcome location | cron row `result` | run row `result` |
+| Handler suspends | schedule stalls until `resumeTask()` | schedule keeps ticking |
+| Schedule `result` | overwritten each round | never written |
+| Schedule attempts / claim events | one attempt + two events per round | none (bounded tail of round events) |
+| Handler `max_concurrent_tasks` | can starve the schedule | gates runs only |
+| Atomicity of "spawn + advance" | n/a | single transaction, at most one run per window |
+
+Notes:
+
+- The mode is a **manager-level** option, not a per-schedule column: adding a column would change the schema version and force every existing deployment to rebuild its tables.
+- Switching back to `'inline'` is safe for rows spawned earlier — they are ordinary `async` rows and keep executing.
+- Spawn failures do not stall the schedule: `next_run_time` still advances, `getCronSchedules()[].last_error` carries the reason, and a `task_cron_spawn_failed` event is written. The round is not retried — "no order sent" is safer than "order sent twice", and the next window is at most one period away.
+- The payload is copied **verbatim** from the schedule row. fib-flow does not flatten or validate it: store the shape your handler expects.
+- `getCronSchedules()` exposes `last_spawned_task_id` (derived from the audit trail; no new column) so callers can follow the spawned run.
+
 ### Task Control
 Task control methods provide ways to manage the TaskManager instance and individual task execution.
 ```javascript
@@ -381,6 +412,20 @@ cancelTask(taskId, options)
 cancelCron(filters, options)
 
 /**
+ * Spawn one cron run immediately, without waiting for its window
+ *
+ * Only a run row is created — the schedule row is untouched, so a cancelled or
+ * paused schedule is not revived and next_run_time does not move. Works in both
+ * execution modes.
+ * @param {string|number} scheduleId Cron schedule row id
+ * @param {Object} [payload] Run payload; defaults to the schedule payload
+ * @param {Object} [options] Trigger options
+ * @param {string} [options.trigger='manual'] Recorded on the spawned event
+ * @returns {{taskId:number|string, next_run_time:number|null}}
+ */
+runCronNow(scheduleId, payload, options)
+
+/**
  * Pause a specific running task by ID
  * @param {string} taskId Task ID
  */
@@ -429,6 +474,9 @@ getTaskStatsByTag(tag, status)
 
 // List cron schedules (includes an orphan flag when the handler is gone)
 getCronSchedules(filters)
+
+// Spawn one cron run immediately (schedule row untouched)
+runCronNow(scheduleId, payload, options)
 
 // Aggregate cron schedule counters
 getCronScheduleStats()

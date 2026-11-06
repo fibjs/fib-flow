@@ -2,6 +2,94 @@
 
 All notable changes to this project are documented in this file.
 
+## 8.1.0
+
+Cron schedules can now be separated from the runs they produce. This is a purely
+additive release: the default mode keeps 8.0.1 semantics byte for byte, so
+upgrading changes no behaviour until `cronMode` is set explicitly.
+
+### Added
+
+- **`cronMode: 'inline' | 'spawn'`** (manager option, default `'inline'`).
+  In `'spawn'` mode a cron row never executes user code: each round inserts an
+  independent `async` run row and advances the schedule inside a single
+  transaction. This fixes the design flaw behind the classic cron problems — a
+  row that must both persist forever and be reused every round ends up
+  overwriting `result`, resetting `stage`, and freezing the entire schedule as
+  soon as a handler suspends.
+- **`runCronNow(scheduleId, payload?, options?)`** — spawn one run immediately
+  without moving `next_run_time`. Works on any schedule status, so a paused or
+  cancelled schedule is never revived by a manual trigger.
+- **`getCronSchedules()[].last_spawned_task_id`** — id of the most recently
+  spawned run, derived from the `task_cron_spawned` audit event (no schema
+  change, so no table rebuild on upgrade).
+- **New audit events**: `task_cron_spawned` (`spawned_task_id`,
+  `scheduled_run_time`, `next_run_time`, `trigger`) and `task_cron_spawn_failed`
+  (error plus the advanced `next_run_time`). Only the 20 most recent per-round
+  schedule events are kept: a schedule row is never collected by retention, so an
+  uncapped per-round trail would grow forever. The spawned run rows are the
+  authoritative round history.
+- **New attempt outcomes**: `spawned` and `spawn_failed`, so a spawn round is
+  never mistaken for an executed one when triaging.
+
+### Behaviour in `'spawn'` mode
+
+- **At most one spawn per window.** The run-row insert and the schedule advance
+  share one transaction; a crash in between rolls the whole round back instead of
+  producing a second run on the next tick.
+- **Suspension no longer freezes scheduling.** A suspending run row is an ordinary
+  `async` task; the schedule keeps ticking.
+- **The schedule row never accumulates attempts or claim events, and its
+  per-round trail is bounded.** A spawn round is not an execution, so no attempt
+  row is opened and no `task_claimed` / `task_started` events are written. Only
+  the 20 most recent `task_cron_spawned` / `task_cron_spawn_failed` /
+  `task_cron_missed` rows per schedule are retained. This matters because
+  schedule rows are never collected by retention (`pending` / `running` /
+  `suspended` are outside the retention status gate): one attempt plus two events
+  per round would grow without bound.
+- **Handler concurrency limits cannot starve a schedule.** `max_concurrent_tasks`
+  gates runs; schedules are claimed separately so a saturated handler does not
+  remove the name from the claim list.
+- **The round payload is the schedule payload, verbatim.** fib-flow does not
+  flatten or validate it.
+- **Spawn failures do not stall the schedule.** `next_run_time` advances, the
+  error is recorded on the row (visible as `last_error`) and in
+  `task_cron_spawn_failed`. The round is not retried.
+
+### Implementation notes
+
+- `insertTask()`, `updateTaskStatus()` and `insertTaskEvents()` each open their own
+  transaction, so nesting them is fatal (single-connection wrappers raise
+  `cannot start a transaction within a transaction`; pooled SQLite blocks until
+  the pool timeout). Spawn therefore uses connection-scoped private helpers
+  (`_insertTaskRowWithConnection`, `spawnCronRun`, `failCronSpawn`) instead of
+  composing the public API.
+- `claimTask()` gained optional `skipAttempt` / `skipEvents` / `typeFilter`
+  parameters. Defaults are unchanged.
+- No schema change: `schema_version` stays `2`, and no column was added.
+
+### Documentation
+
+- `docs/core-concepts.md`: cron execution modes, and why spawn exists.
+- `docs/api-reference.md`: `cronMode`, `runCronNow`, the execution-mode matrix.
+
+### Test suite
+
+- Verified against SQLite, PostgreSQL 16 and MySQL 8.0 (220 passing, 1 skipped on
+  each; `FIB_FLOW_TEST_DB` selects the backend).
+- Two pre-existing tests were made deterministic. Both timed on wall-clock
+  seconds and failed intermittently on the network backends:
+  - *"should use deterministic task id tie-breaking for equal workflow critical
+    paths"* relied on two siblings sleeping exactly as long as each other;
+    durations are whole seconds (`ended_at - started_at`), so siblings straddling
+    a second boundary produced unequal paths and the tie-break never triggered.
+    Attempt durations are now pinned before the assertion.
+  - *"should handle cron task with async subtasks"* waited for the cron row to
+    reach `pending` only. A cron row also passes through `pending` between
+    "children completed" and "the round's final execution", where `result` still
+    holds the child entries. It now waits for the round result.
+- The spawn suite runs in `test/cron_spawn_test.js` (20 cases).
+
 ## 8.0.1
 
 Bugfix release for `8.0.0`. Two of these are availability issues: a public API

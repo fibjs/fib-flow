@@ -189,6 +189,59 @@ taskManager.use('complexTask', {
 - Support same retry mechanism as async tasks with configurable intervals
 - Support task chaining through dependencies for complex schedules
 
+#### Cron execution modes
+
+A cron row is a **schedule**, not a run. How a round executes is chosen by the
+manager-level `cronMode` option (the default keeps 8.0.x behaviour, so upgrading
+changes nothing until you opt in):
+
+| Mode | What happens each round | Suspension |
+|---|---|---|
+| `'inline'` (default) | The cron row itself runs the handler, then resets to `pending` with a new `next_run_time`. The round's `result` is written onto the schedule row. | A handler that suspends leaves the row `suspended`; it stops being `pending`, so the schedule stops firing until `resumeTask()`. |
+| `'spawn'` | The cron row never runs business code. Each round inserts an independent `async` run row and advances the schedule **in one transaction**. | A suspending run row is just an `async` task: the schedule ticks normally on the next window. |
+
+```javascript
+const manager = new TaskManager({
+    dbConnection: 'sqlite:jobs.db',
+    cronMode: 'spawn'
+});
+
+manager.use('refreshCatalog', async (task) => {
+    // Runs on its own async row every round.
+    return refresh(task.payload);
+});
+
+manager.cron('refreshCatalog', '0 * * * *', { scope: 'all' });
+```
+
+Properties that hold in `spawn` mode:
+
+- **At most one spawn per window.** Inserting the run row and advancing the
+  schedule share a transaction, so a crash in between cannot produce a second run
+  on the next tick.
+- **One run = one row.** Retries, suspension, audit events and retention all apply
+  to the run row, exactly as they do for a manually enqueued task.
+- **The schedule row never executes.** A throwing handler cannot affect
+  scheduling; the round's outcome is recorded in
+  `getCronSchedules()[].last_error` and a `task_cron_spawn_failed` event.
+- **The schedule row does not accumulate attempts or claim events.** A spawn round
+  is not an execution, so `getTaskAttempts(scheduleId)` stays empty and the audit
+  trail keeps at most 20 `task_cron_spawned` / `task_cron_spawn_failed` /
+  `task_cron_missed` rows per schedule. This matters: schedule rows are never
+  collected by retention, so an uncapped per-round trail would grow forever
+  (a one-minute schedule writes half a million rows a year). The spawned run rows
+  are the authoritative round history.
+- **Handler concurrency limits do not starve the schedule.** `max_concurrent_tasks`
+  gates runs, not the schedule tick.
+- **The payload is copied verbatim.** fib-flow does not reshape it; whatever shape
+  your handler expects must already be stored on the schedule row.
+
+`runCronNow(scheduleId, payload?)` spawns one run immediately without moving
+`next_run_time`. It works on any schedule status, so a paused or cancelled
+schedule is never revived by a manual trigger. `getCronSchedules()` reports the
+most recent run id as `last_spawned_task_id` (derived from the audit trail, not a
+column) so callers can track the spawned run.
+
 ## Error Handling
 
 1. **Task Timeout**
