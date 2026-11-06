@@ -62,6 +62,9 @@ export type TaskEventType =
     | 'task_cron_rescheduled'
     | 'task_cron_spawned'
     | 'task_cron_spawn_failed'
+    | 'task_cron_overlap_skipped'
+    | 'task_cron_run_failed'
+    | 'task_cron_run_recovered'
     | 'task_permanently_failed'
     | 'task_recovered';
 
@@ -512,6 +515,32 @@ export interface CronSpawnFailureInput {
     next_run_time: number;
     /** Failure text recorded on the row and in the audit event. */
     error: string;
+}
+
+/** Input accepted by `adapter.countScheduleRunsInFlight()`. */
+export interface CronScheduleInFlightQuery {
+    /** Schedule name. */
+    name: string;
+    /** Schedule tag; `null` matches untagged runs. */
+    tag?: string | null;
+}
+
+/** Input accepted by `adapter.skipCronRoundForOverlap()`. */
+export interface CronOverlapSkipInput {
+    /** Claimed schedule row. */
+    schedule: TaskRecord;
+    /** Next instant for the schedule. */
+    next_run_time: number;
+    /** Number of runs that were still in flight when the round was skipped. */
+    in_flight: number;
+}
+
+/** Input accepted by `adapter.recordScheduleRunOutcome()`. */
+export interface CronRunOutcomeInput {
+    /** Finished run row; `name` and `tag` identify its schedule. */
+    run: TaskRecord;
+    /** Failure text, or `null` to clear a previous failure. */
+    error: string | null;
 }
 
 export interface TaskEventInput {

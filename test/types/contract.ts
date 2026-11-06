@@ -122,6 +122,13 @@ const plainCronOptions: CronOptions = { cronKey: 'default' };
 // @ts-expect-error — cron options have no `delay`
 const invalidCronOptions: CronOptions = { delay: 5 };
 
+// Overlap cap (spawn mode). 0 means unlimited.
+const overlapCronOptions: CronOptions = { maxInstances: 0 };
+void overlapCronOptions;
+// @ts-expect-error — maxInstances must be a number
+const invalidMaxInstances: CronOptions = { maxInstances: '1' };
+void invalidMaxInstances;
+
 // --- lifecycle & control --------------------------------------------------
 
 const resumed: TaskRecord | null = taskManager.resumeTask(asyncId, { resume_reason: 'approved' });

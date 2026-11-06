@@ -546,7 +546,7 @@ describe('Cron spawn mode', () => {
         ));
 
         // Stale cache: the spawn probe will find no eligible schedule names.
-        taskManager._scheduleNameCache = { at: Date.now(), names: [] };
+        taskManager._scheduleNameCache = { at: Date.now(), eligible: [], known: new Set() };
 
         // The schedule row must never be returned as an executable claim.
         const claimed = taskManager._claimNextTask();
@@ -639,6 +639,151 @@ describe('Cron spawn mode', () => {
                     return runs.some(run => run.status === 'completed');
                 }, 12000),
                 'the schedule must resume once a handler is registered again'
+            );
+        } finally {
+            taskManager.stop();
+        }
+    });
+
+    it('should not overlap runs by default', () => {
+        // Inline mode was mutually exclusive for free: its cron row was `running`
+        // and therefore not claimable. Spawn removes that, so the equivalent cap
+        // has to be explicit — otherwise a handler slower than its period stacks
+        // runs forever, and the queued ones never reach a terminal state (so
+        // retention never collects them either).
+        let concurrent = 0;
+        let peak = 0;
+        taskManager.use('spawn_overlap', () => {
+            concurrent++;
+            peak = Math.max(peak, concurrent);
+            coroutine.sleep(1500);
+            concurrent--;
+            return 'ok';
+        });
+        taskManager.db.setup();
+
+        taskManager.cron('spawn_overlap', '* * * * * *', {});
+        taskManager.start();
+
+        try {
+            assert.ok(
+                waitFor(() => taskManager.getTasks({ name: 'spawn_overlap', type: 'async' }).length >= 3, 15000),
+                'expected several rounds'
+            );
+
+            assert.equal(peak, 1, 'rounds must not overlap by default');
+
+            const [schedule] = taskManager.getCronSchedules({ name: 'spawn_overlap' });
+            const skipEvents = taskManager.getTaskEvents(schedule.id)
+                .filter(event => event.event_type === 'task_cron_overlap_skipped');
+            assert.ok(skipEvents.length >= 1, 'an overlap skip must be recorded on the schedule');
+
+            // No backlog of rows that can never finish.
+            const inFlight = taskManager.getTasks({ name: 'spawn_overlap', type: 'async' })
+                .filter(run => run.status === 'pending' || run.status === 'running');
+            assert.ok(inFlight.length <= 1, `at most one run may be in flight, got ${inFlight.length}`);
+
+            // A skipped round must not look like a failure.
+            assert.equal(schedule.last_error, null, 'an overlap skip is not an error');
+        } finally {
+            taskManager.stop();
+        }
+    });
+
+    it('should honour maxInstances to allow controlled overlap', () => {
+        let concurrent = 0;
+        let peak = 0;
+        taskManager.use('spawn_overlap2', () => {
+            concurrent++;
+            peak = Math.max(peak, concurrent);
+            coroutine.sleep(1500);
+            concurrent--;
+            return 'ok';
+        });
+        taskManager.db.setup();
+
+        taskManager.cron('spawn_overlap2', '* * * * * *', {}, { maxInstances: 2 });
+        taskManager.start();
+
+        try {
+            assert.ok(
+                waitFor(() => peak >= 2, 15000),
+                `maxInstances: 2 must allow two concurrent runs, peak was ${peak}`
+            );
+            assert.ok(peak <= 2, `must never exceed the declared cap, peak was ${peak}`);
+        } finally {
+            taskManager.stop();
+        }
+    });
+
+    it('should reject an invalid maxInstances', () => {
+        taskManager.use('spawn_overlap_bad', () => 'ok');
+        taskManager.db.setup();
+
+        assert.throws(
+            () => taskManager.cron('spawn_overlap_bad', '* * * * * *', {}, { maxInstances: -1 }),
+            /maxInstances must be a non-negative integer/
+        );
+        assert.throws(
+            () => taskManager.cron('spawn_overlap_bad', '* * * * * *', {}, { maxInstances: 1.5 }),
+            /maxInstances must be a non-negative integer/
+        );
+    });
+
+    it('should surface a failing round on the schedule row', () => {
+        // Inline mode reported failures on the schedule row because the row was the
+        // execution. Spawn moved execution to a run row, so without mirroring the
+        // schedule would look healthy while every round fails.
+        taskManager.use('spawn_fail_signal', () => {
+            throw new Error('boom');
+        });
+        taskManager.db.setup();
+
+        const scheduleId = taskManager.cron('spawn_fail_signal', '* * * * * *', {}, { maxInstances: 0 });
+        taskManager.start();
+
+        try {
+            assert.ok(
+                waitFor(() => {
+                    const schedule = taskManager.getTask(scheduleId);
+                    return /boom/.test(schedule.error || '');
+                }, 12000),
+                'a failing run must leave the reason on the schedule row'
+            );
+
+            const [schedule] = taskManager.getCronSchedules({ name: 'spawn_fail_signal' });
+            assert.match(schedule.last_error, /boom/);
+            // Still firing: the schedule did not stop.
+            assert.equal(schedule.status, 'pending');
+        } finally {
+            taskManager.stop();
+        }
+    });
+
+    it('should clear the schedule error once a round succeeds again', () => {
+        let shouldFail = true;
+        taskManager.use('spawn_fail_recover', () => {
+            if (shouldFail) {
+                throw new Error('boom');
+            }
+            return 'ok';
+        });
+        taskManager.db.setup();
+
+        const scheduleId = taskManager.cron('spawn_fail_recover', '* * * * * *', {}, { maxInstances: 0 });
+        taskManager.start();
+
+        try {
+            assert.ok(
+                waitFor(() => /boom/.test(taskManager.getTask(scheduleId).error || ''), 12000),
+                'expected the failure to be visible'
+            );
+
+            shouldFail = false;
+
+            assert.ok(
+                waitFor(() => taskManager.getTask(scheduleId).error === null, 12000),
+                'a successful round must clear the stale error'
             );
         } finally {
             taskManager.stop();

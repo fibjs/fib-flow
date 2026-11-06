@@ -19,6 +19,9 @@ import type {
     CronScheduleStats,
     CronScheduleUpdate,
     CronScheduleUpsertResult,
+    CronOverlapSkipInput,
+    CronRunOutcomeInput,
+    CronScheduleInFlightQuery,
     CronSkipDetails,
     CronSpawnFailureInput,
     CronSpawnInput,
@@ -129,6 +132,16 @@ export interface CronOptions extends Omit<TaskOptions, 'delay'> {
     timezone?: string;
     /** Missed-window policy. Default `'once'`. */
     catchUp?: CronCatchUp;
+    /**
+     * Maximum number of runs of this schedule that may be in flight at once.
+     * Only meaningful in `cronMode: 'spawn'`.
+     *
+     * Default `1`, which reproduces inline mode's mutual exclusion. `0` removes the
+     * cap (rounds may overlap freely). A round that would exceed the cap is skipped:
+     * `next_run_time` still advances and a `task_cron_overlap_skipped` event is
+     * recorded, but no run row is created and `error` is left alone.
+     */
+    maxInstances?: number;
 }
 
 export interface SuspensionOptions {
@@ -435,6 +448,22 @@ export declare class DatabaseAdapter {
      * schedule keeps firing and the error stays visible via `last_error`.
      */
     failCronSpawn(params: CronSpawnFailureInput): { next_run_time: number };
+    /**
+     * Count runs of a schedule that are still `pending` or `running`.
+     * Used to enforce `maxInstances` in spawn mode.
+     */
+    countScheduleRunsInFlight(params: CronScheduleInFlightQuery): number;
+    /**
+     * Advance a schedule past a round skipped because too many runs are in flight.
+     * Writes no `error`: an overlap skip is expected, not a failure.
+     */
+    skipCronRoundForOverlap(params: CronOverlapSkipInput): { next_run_time: number };
+    /**
+     * Mirror a finished run's outcome onto the schedule that spawned it, so a
+     * failing schedule stays visible through `getCronSchedules()[].last_error`.
+     * Pass `error: null` on success to clear a previous failure.
+     */
+    recordScheduleRunOutcome(params: CronRunOutcomeInput): number;
     updateTaskStatus(taskId: TaskIdentifier, status: TaskStatus, extra?: TaskStatusUpdate): void;
     recordCronWindowSkipped(taskId: TaskIdentifier, details: CronSkipDetails): boolean;
     recordTaskProgress(taskId: TaskIdentifier, progress: TaskProgressSnapshot, workerId?: string | null): number;
