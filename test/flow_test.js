@@ -507,7 +507,6 @@ describe("Workflow Tests", () => {
 
         taskManager.use('tie_root', (task, next) => {
             if (task.stage === 0) {
-                coroutine.sleep(1200);
                 return next([
                     { name: 'tie_child_a' },
                     { name: 'tie_child_b' }
@@ -517,15 +516,8 @@ describe("Workflow Tests", () => {
             return { done: true };
         });
 
-        taskManager.use('tie_child_a', () => {
-            coroutine.sleep(1200);
-            return { branch: 'a' };
-        });
-
-        taskManager.use('tie_child_b', () => {
-            coroutine.sleep(1200);
-            return { branch: 'b' };
-        });
+        taskManager.use('tie_child_a', () => ({ branch: 'a' }));
+        taskManager.use('tie_child_b', () => ({ branch: 'b' }));
 
         taskManager.start();
 
@@ -536,8 +528,38 @@ describe("Workflow Tests", () => {
         }
 
         const children = taskManager.getChildTasks(rootTaskId).slice().sort((left, right) => left.id - right.id);
+
+        // Durations are derived from whole seconds (ended_at - started_at), so two
+        // siblings that merely sleep for the same wall-clock time can still land on
+        // different values when they straddle a second boundary. Pin both children
+        // to an identical duration so the tie-break comparison is what is tested,
+        // not the clock.
+        const pinnedStart = Math.floor(Date.now() / 1000) - 60;
+        taskManager.db.pool(conn => {
+            for (const child of children) {
+                conn.execute(
+                    `UPDATE fib_flow_task_attempts
+                        SET started_at = ?, ended_at = ?
+                      WHERE task_id = ?`,
+                    pinnedStart,
+                    pinnedStart + 5,
+                    child.id
+                );
+            }
+        });
+
         const workflowSummary = taskManager.getWorkflowAuditSummary(rootTaskId);
         assert.equal(workflowSummary.critical_path.nodes.length, 2);
+
+        // Both children must carry the same pinned duration, otherwise the
+        // tie-break branch is never reached and the assertion below proves
+        // nothing.
+        const childDurations = children.map(child => {
+            const attempts = taskManager.getTaskAttempts(child.id);
+            return attempts[0].ended_at - attempts[0].started_at;
+        });
+        assert.deepEqual(childDurations, [5, 5], 'both children must share one duration');
+
         assert.equal(workflowSummary.critical_path.nodes[1].task_id, children[0].id);
     });
 
@@ -806,10 +828,15 @@ describe("Workflow Tests", () => {
         assert.ok(childTaskExecutions >= 4, 'Child tasks should execute at least 4 times (2 child tasks per cron execution)');
 
         if (lastParentTaskId) {
-            const waitDeadline = Date.now() + 3000;
+            // `pending` alone is not the settled state: a cron row also passes
+            // through `pending` between "children completed" and "final round
+            // re-executed", where `result` still holds the child entries. Wait for
+            // the round result so the assertions below read a finished round.
+            const waitDeadline = Date.now() + 8000;
             while (Date.now() < waitDeadline) {
                 const candidate = taskManager.getTask(lastParentTaskId);
-                if (candidate && candidate.status === 'pending') {
+                if (candidate && candidate.status === 'pending'
+                    && candidate.result && candidate.result.result === 'cron_parent_completed') {
                     break;
                 }
                 coroutine.sleep(100);
