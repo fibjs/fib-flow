@@ -345,6 +345,8 @@ const spawn = new TaskManager({ dbConnection: 'sqlite:jobs.db', cronMode: 'spawn
 | Schedule `result` | overwritten each round | never written |
 | Schedule attempts / claim events | one attempt + two events per round | none (bounded tail of round events) |
 | Handler `max_concurrent_tasks` | can starve the schedule | gates runs only |
+| Overlapping rounds | impossible (the row is `running`) | `maxInstances`, default `1`; excess rounds are skipped |
+| Failure visibility | schedule row goes `failed` with the error | schedule stays `pending`; the reason is mirrored to `last_error` |
 | Orphan schedule (handler gone) | row never claimed, stays `pending` | round skipped, no run rows created |
 | Atomicity of "spawn + advance" | n/a | single transaction, at most one run per window |
 
@@ -352,6 +354,8 @@ Notes:
 
 - The mode is a **manager-level** option, not a per-schedule column: adding a column would change the schema version and force every existing deployment to rebuild its tables.
 - Switching back to `'inline'` is safe for rows spawned earlier — they are ordinary `async` rows and keep executing.
+- **Rounds do not overlap by default.** Inline mode got mutual exclusion for free (its cron row was `running`, so it could not be claimed). Spawn removes that, so the equivalent cap is explicit: `maxInstances` defaults to `1` and a round that would exceed it is skipped (no run row, `next_run_time` still advances, a `task_cron_overlap_skipped` event is written, `error` untouched). Pass `maxInstances: 0` for unbounded overlap.
+- **A failing round is visible on the schedule.** The run row carries the failure; the reason is mirrored onto the schedule's `error` so `last_error` is not empty while every round fails, and a later success clears it. The schedule status stays `pending` because it keeps firing.
 - Spawn failures do not stall the schedule: `next_run_time` still advances, `getCronSchedules()[].last_error` carries the reason, and a `task_cron_spawn_failed` event is written. The round is not retried — "no order sent" is safer than "order sent twice", and the next window is at most one period away.
 - The payload is copied **verbatim** from the schedule row. fib-flow does not flatten or validate it: store the shape your handler expects.
 - `getCronSchedules()` exposes `last_spawned_task_id` (derived from the audit trail; no new column) so callers can follow the spawned run.

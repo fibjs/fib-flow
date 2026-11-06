@@ -231,6 +231,19 @@ Properties that hold in `spawn` mode:
   collected by retention, so an uncapped per-round trail would grow forever
   (a one-minute schedule writes half a million rows a year). The spawned run rows
   are the authoritative round history.
+- **Rounds do not overlap by default.** Inline mode was mutually exclusive for
+  free: its cron row was `running`, so it could not be claimed. Spawn removes
+  that, so the cap is explicit — `maxInstances` defaults to `1`. A round that
+  would exceed the cap is skipped: `next_run_time` still advances and a
+  `task_cron_overlap_skipped` event is recorded, but no run row is created and
+  `error` stays untouched (an overlap skip is not a failure). Pass
+  `maxInstances: 0` to allow unbounded overlap.
+- **A failing round leaves its reason on the schedule row.** The failure itself
+  lands on the run row (`status: 'failed'`), but the reason is mirrored onto the
+  schedule's `error`, so `getCronSchedules()[].last_error` does not stay empty
+  while every round fails. The next successful round clears it. Note that the
+  schedule status stays `pending` — it keeps firing — so a consumer deciding
+  "is this schedule healthy?" must read `last_error`, not only `status`.
 - **Handler concurrency limits do not starve the schedule.** `max_concurrent_tasks`
   gates runs, not the schedule tick.
 - **An orphan schedule does not spawn.** If a schedule's handler is no longer

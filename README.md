@@ -177,6 +177,19 @@ overwritten, no attempt or claim-event rows accumulate on it, handler
 `getCronSchedules()[].last_spawned_task_id` points at the latest run.
 `runCronNow(scheduleId)` spawns one extra run without moving `next_run_time`.
 
+Two behaviours differ from inline mode and are worth knowing before switching:
+
+- **Rounds do not overlap by default.** Inline was mutually exclusive for free
+  (its row was `running`, so not claimable). Spawn keeps that guarantee via
+  `maxInstances` (default `1`): a round that would exceed it is skipped, with
+  `next_run_time` still advancing and a `task_cron_overlap_skipped` event
+  recorded. Set `maxInstances: 0` to allow unbounded overlap — a handler slower
+  than its cron period will then stack runs that can never be collected.
+- **Failures surface on the schedule row's `error`, not its `status`.** The
+  schedule keeps firing, so it stays `pending`; `getCronSchedules()[].last_error`
+  carries the latest run's failure and a later success clears it. When deciding
+  "is this schedule healthy?", read `last_error`, not only `status`.
+
 Hot reload semantics:
 
 - A task attempt that is already executing keeps the handler version captured when it started.

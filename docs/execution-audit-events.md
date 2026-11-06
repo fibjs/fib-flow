@@ -48,6 +48,9 @@ Each event row may contain these fields:
 | `task_cron_missed` | `catchUp: 'skip'` drops a window that is at least one period late | `running -> pending` with an attempt outcome of `skipped` | `skipped_windows`, scheduled run time, next run time |
 | `task_cron_spawned` | `cronMode: 'spawn'` spawns a run row for the round | `running -> pending`; the run row starts its own lifecycle | `spawned_task_id`, `scheduled_run_time`, `next_run_time`, `trigger` (`'cron'` / `'manual'`), `advanced` |
 | `task_cron_spawn_failed` | A spawn round could not create the run row | `running -> pending`; the schedule keeps firing | `error`, `scheduled_run_time`, `next_run_time` |
+| `task_cron_overlap_skipped` | `maxInstances` was reached, so the round was skipped | `running -> pending`; no run row created | `in_flight`, `scheduled_run_time`, `next_run_time` |
+| `task_cron_run_failed` | A spawned run finished as `failed` / `timeout`; the reason is mirrored onto the schedule | Schedule status unchanged; only `error` is written | `spawned_task_id`, `error` |
+| `task_cron_run_recovered` | A spawned run succeeded and cleared a previously mirrored failure | Schedule status unchanged; `error` reset to `NULL` | `spawned_task_id` |
 | `task_status_changed` | A status change does not map to a dedicated event type | Used for generic transitions such as `running -> suspended` or `suspended -> pending` | retry count, next run time, resume reason |
 | `task_progress` | Handler code calls `task.progress()` | No authoritative status transition; snapshot cache update only | stage name, progress text, progress percent, handler metadata |
 | `task_checkpoint` | Handler code calls `task.audit()` | No authoritative status transition; checkpoint only | checkpoint code, message, handler metadata |

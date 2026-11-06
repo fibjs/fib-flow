@@ -59,6 +59,23 @@ upgrading changes no behaviour until `cronMode` is set explicitly.
   again as soon as a handler is registered, so this is not a one-way cancellation.
   Inline mode was never affected: `claimTask` already filters on the registered
   name list.
+- **Rounds do not overlap by default.** Inline mode was mutually exclusive for
+  free: its cron row was `running`, so it could not be claimed. Spawn removes that
+  guarantee, so `cron(..., { maxInstances })` supplies it explicitly and defaults
+  to `1`. Without a cap, a handler slower than its cron period stacks overlapping
+  runs forever and the queued `pending` rows never reach a terminal state — so
+  retention never collects them either. A round over the cap is skipped:
+  `next_run_time` advances and `task_cron_overlap_skipped` is recorded, but no run
+  row is created and `error` is left alone. `maxInstances: 0` allows unbounded
+  overlap.
+- **A failing round stays visible on the schedule row.** Inline mode reported
+  failures on the schedule because the row was the execution; spawn moved
+  execution to a run row, which left the schedule a pristine `pending` with
+  `error = NULL` while every round failed — a consumer reading `last_error` would
+  show "active, no errors" forever. The run's failure text is now mirrored onto the
+  schedule's `error` (`task_cron_run_failed` / `task_cron_run_recovered` events),
+  and a later successful round clears it. The status deliberately stays `pending`
+  because the schedule keeps firing.
 - **The round payload is the schedule payload, verbatim.** fib-flow does not
   flatten or validate it.
 - **Spawn failures do not stall the schedule.** `next_run_time` advances, the
@@ -84,7 +101,7 @@ upgrading changes no behaviour until `cronMode` is set explicitly.
 
 ### Test suite
 
-- Verified against SQLite, PostgreSQL 16 and MySQL 8.0 (222 passing, 1 skipped on
+- Verified against SQLite, PostgreSQL 16 and MySQL 8.0 (227 passing, 1 skipped on
   each; `FIB_FLOW_TEST_DB` selects the backend).
 - Two pre-existing tests were made deterministic. Both timed on wall-clock
   seconds and failed intermittently on the network backends:
@@ -97,7 +114,7 @@ upgrading changes no behaviour until `cronMode` is set explicitly.
     reach `pending` only. A cron row also passes through `pending` between
     "children completed" and "the round's final execution", where `result` still
     holds the child entries. It now waits for the round result.
-- The spawn suite runs in `test/cron_spawn_test.js` (23 cases).
+- The spawn suite runs in `test/cron_spawn_test.js` (28 cases).
 
 ## 8.0.1
 
