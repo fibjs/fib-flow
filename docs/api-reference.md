@@ -345,6 +345,7 @@ const spawn = new TaskManager({ dbConnection: 'sqlite:jobs.db', cronMode: 'spawn
 | Schedule `result` | overwritten each round | never written |
 | Schedule attempts / claim events | one attempt + two events per round | none (bounded tail of round events) |
 | Handler `max_concurrent_tasks` | can starve the schedule | gates runs only |
+| Orphan schedule (handler gone) | row never claimed, stays `pending` | round skipped, no run rows created |
 | Atomicity of "spawn + advance" | n/a | single transaction, at most one run per window |
 
 Notes:

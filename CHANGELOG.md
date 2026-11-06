@@ -50,6 +50,15 @@ upgrading changes no behaviour until `cronMode` is set explicitly.
 - **Handler concurrency limits cannot starve a schedule.** `max_concurrent_tasks`
   gates runs; schedules are claimed separately so a saturated handler does not
   remove the name from the claim list.
+- **An orphan schedule does not spawn.** A schedule whose handler has been
+  unregistered (definition deleted but `cancelCron` never ran — a crash in
+  between, or a partially failed definition load) is skipped instead of spawning.
+  Its run rows would carry a name nobody registered, so they could never be
+  claimed, never reach a terminal state, and never become retention candidates —
+  an unbounded leak on a long-lived process. The row stays `pending` and picks up
+  again as soon as a handler is registered, so this is not a one-way cancellation.
+  Inline mode was never affected: `claimTask` already filters on the registered
+  name list.
 - **The round payload is the schedule payload, verbatim.** fib-flow does not
   flatten or validate it.
 - **Spawn failures do not stall the schedule.** `next_run_time` advances, the
@@ -75,7 +84,7 @@ upgrading changes no behaviour until `cronMode` is set explicitly.
 
 ### Test suite
 
-- Verified against SQLite, PostgreSQL 16 and MySQL 8.0 (220 passing, 1 skipped on
+- Verified against SQLite, PostgreSQL 16 and MySQL 8.0 (222 passing, 1 skipped on
   each; `FIB_FLOW_TEST_DB` selects the backend).
 - Two pre-existing tests were made deterministic. Both timed on wall-clock
   seconds and failed intermittently on the network backends:
@@ -88,7 +97,7 @@ upgrading changes no behaviour until `cronMode` is set explicitly.
     reach `pending` only. A cron row also passes through `pending` between
     "children completed" and "the round's final execution", where `result` still
     holds the child entries. It now waits for the round result.
-- The spawn suite runs in `test/cron_spawn_test.js` (20 cases).
+- The spawn suite runs in `test/cron_spawn_test.js` (23 cases).
 
 ## 8.0.1
 

@@ -233,6 +233,11 @@ Properties that hold in `spawn` mode:
   are the authoritative round history.
 - **Handler concurrency limits do not starve the schedule.** `max_concurrent_tasks`
   gates runs, not the schedule tick.
+- **An orphan schedule does not spawn.** If a schedule's handler is no longer
+  registered, the round is skipped rather than spawning a run row nobody can
+  claim — such a row would never reach a terminal state and never become a
+  retention candidate. The schedule row stays `pending` (not cancelled) and
+  resumes as soon as a handler is registered again.
 - **The payload is copied verbatim.** fib-flow does not reshape it; whatever shape
   your handler expects must already be stored on the schedule row.
 
