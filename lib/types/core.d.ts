@@ -19,6 +19,22 @@ export type TaskStatus =
 
 export type TaskType = 'async' | 'cron';
 
+/**
+ * How cron schedules execute.
+ *
+ * - `inline`: the cron row itself runs the handler (8.0.x behaviour).
+ * - `spawn`: the cron row only spawns an independent `async` run row per round.
+ */
+export type CronMode = 'inline' | 'spawn';
+
+/** Result of a spawn operation (`runCronNow`). */
+export interface CronSpawnResult {
+    /** Id of the created run row. */
+    taskId: TaskIdentifier;
+    /** Schedule instant after the round; `null` when the schedule was not advanced. */
+    next_run_time: number | null;
+}
+
 /** Statuses a task can never leave. */
 export type TerminalTaskStatus = 'completed' | 'permanently_failed' | 'cancelled';
 
@@ -44,6 +60,8 @@ export type TaskEventType =
     | 'task_cancelled'
     | 'task_cron_missed'
     | 'task_cron_rescheduled'
+    | 'task_cron_spawned'
+    | 'task_cron_spawn_failed'
     | 'task_permanently_failed'
     | 'task_recovered';
 
@@ -54,7 +72,11 @@ export type AttemptOutcome =
     | 'timeout'
     | 'suspended'
     | 'interrupted'
-    | 'skipped';
+    | 'skipped'
+    /** Spawn-mode cron round: a run row was created, no handler executed. */
+    | 'spawned'
+    /** Spawn-mode cron round: creating the run row failed. */
+    | 'spawn_failed';
 
 export type TaskIdentifier = number | string;
 
@@ -388,6 +410,15 @@ export interface CronSchedule {
     status: TaskStatus;
     retry_count: number;
     last_error: string | null;
+    /**
+     * Id of the most recently spawned run (spawn mode only).
+     *
+     * Derived from the `task_cron_spawned` audit event rather than stored in a
+     * column, so it costs no schema change. Omitted by the adapter unless
+     * `getCronSchedules(filters, names, { include_spawned: true })` is used;
+     * `TaskManager#getCronSchedules()` always resolves it.
+     */
+    last_spawned_task_id?: TaskIdentifier | null;
     /** `true` when no handler is registered for `name`; omitted when unknown. */
     orphan?: boolean;
 }
@@ -454,6 +485,33 @@ export interface InsertTaskOptions {
     worker_id?: string | null;
     /** Binary snapshot written to the parent task when creating subtasks. */
     context?: Uint8Array | null;
+}
+
+/** Input accepted by `adapter.spawnCronRun()`. */
+export interface CronSpawnInput {
+    /** Claimed schedule row. */
+    schedule: TaskRecord;
+    /** Next instant for the schedule; required unless `advance` is `false`. */
+    next_run_time?: number;
+    /** Run payload; defaults to the schedule payload. */
+    payload?: unknown;
+    /** Recorded on the spawned event metadata. Default `'cron'`. */
+    trigger?: string;
+    /**
+     * Advance the schedule row. Manual triggers pass `false`: they must not move
+     * `next_run_time` or revive a cancelled/paused schedule.
+     */
+    advance?: boolean;
+}
+
+/** Input accepted by `adapter.failCronSpawn()`. */
+export interface CronSpawnFailureInput {
+    /** Claimed schedule row. */
+    schedule: TaskRecord;
+    /** Next instant for the schedule. */
+    next_run_time: number;
+    /** Failure text recorded on the row and in the audit event. */
+    error: string;
 }
 
 export interface TaskEventInput {

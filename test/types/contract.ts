@@ -41,6 +41,7 @@ const options: TaskManagerOptions = {
     pod_id: 'scheduler-a',
     poll_interval: 100,
     max_retries: 3,
+    cronMode: 'spawn',
     retention: {
         expire_time: 86400,
         statuses: ['completed', 'permanently_failed', 'cancelled']
@@ -55,6 +56,9 @@ new TaskManager({});
 
 // @ts-expect-error — unknown option is rejected
 new TaskManager({ dbConnection: 'sqlite::memory:', nope: true });
+
+// @ts-expect-error — cronMode only accepts 'inline' | 'spawn'
+new TaskManager({ dbConnection: 'sqlite::memory:', cronMode: 'parallel' });
 
 // --- handler registration -------------------------------------------------
 
@@ -128,6 +132,15 @@ const cancelSummary: CancelCronResult = taskManager.cancelCron({ name: 'plain' }
 const cancelledCount: number = cancelSummary.cancelled;
 const skippedCount: number = cancelSummary.skipped;
 
+// Spawn one run immediately: the schedule row stays where it is.
+const spawned = taskManager.runCronNow(cronId, { a: 2 }, { trigger: 'manual' });
+const spawnedId: number | string = spawned.taskId;
+const spawnedNextRun: number | null = spawned.next_run_time;
+void spawnedId; void spawnedNextRun;
+
+// @ts-expect-error — trigger must be a string
+const bogusTrigger = taskManager.runCronNow(cronId, {}, { trigger: 1 });
+
 const retention: TaskRetentionResult = taskManager.runRetention({ expire_time: 3600 });
 const byRow: number | undefined = retention.tasks_deleted_by_row_policy;
 
@@ -157,6 +170,7 @@ const pageHasMore: boolean = page.has_more;
 
 const schedules: CronSchedule[] = taskManager.getCronSchedules({ status: 'pending' });
 const isOrphan: boolean | undefined = schedules[0]?.orphan;
+const lastSpawned: number | string | null | undefined = schedules[0]?.last_spawned_task_id;
 const stats: CronScheduleStats = taskManager.getCronScheduleStats();
 const orphanCount: number = stats.orphan;
 const pruned: PruneCronResult = taskManager.pruneCronSchedules();

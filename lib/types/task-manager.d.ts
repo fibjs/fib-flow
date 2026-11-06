@@ -11,6 +11,7 @@ import type {
     CancelCronFilters,
     CancelCronResult,
     CronCatchUp,
+    CronMode,
     CronSchedule,
     CronScheduleFilters,
     CronScheduleInput,
@@ -19,6 +20,9 @@ import type {
     CronScheduleUpdate,
     CronScheduleUpsertResult,
     CronSkipDetails,
+    CronSpawnFailureInput,
+    CronSpawnInput,
+    CronSpawnResult,
     InsertTaskOptions,
     PagedResult,
     PruneCronResult,
@@ -44,6 +48,7 @@ import type {
     TaskStatus,
     TaskStatusUpdate,
     TaskTagStat,
+    TaskType,
     WorkerRecord,
     WorkflowAuditQueryOptions,
     WorkflowAuditSummary,
@@ -88,6 +93,15 @@ export interface TaskManagerOptions {
     worker_heartbeat_timeout?: number;
     /** Reclaim `running` jobs from dead or superseded workers. Default `true`. */
     recover_running_jobs?: boolean;
+    /**
+     * How cron schedules execute.
+     *
+     * - `'inline'` (default): the cron row runs the handler itself and is reset
+     *   after every round. A handler that suspends freezes the whole schedule.
+     * - `'spawn'`: the cron row never runs business code; each round inserts an
+     *   independent `async` run row and advances the schedule atomically.
+     */
+    cronMode?: CronMode;
     /** Backward-compatible shortcut for `retention.expire_time`. */
     expire_time?: number;
     /** Retention policy; row-level `retention_expire_time` overrides it per task. */
@@ -188,6 +202,31 @@ export interface CancelTaskOptions {
     reason?: string;
 }
 
+/** Options accepted by `runCronNow`. */
+export interface RunCronNowOptions {
+    /** Recorded on the `task_cron_spawned` event metadata. Default `'manual'`. */
+    trigger?: string;
+}
+
+/** Options accepted by `adapter.claimTask()`. */
+export interface ClaimTaskOptions {
+    /** Do not open an attempt row (spawn-mode schedule rounds). */
+    skipAttempt?: boolean;
+    /** Do not write `task_claimed` / `task_started` events. */
+    skipEvents?: boolean;
+    /** Restrict the claim to one task type. */
+    typeFilter?: TaskType;
+}
+
+/** Options accepted by `adapter.getCronSchedules()`. */
+export interface CronScheduleQueryOptions {
+    /**
+     * Also resolve `last_spawned_task_id` from the audit trail. Costs an extra
+     * lookup, so hot-path callers leave it off.
+     */
+    include_spawned?: boolean;
+}
+
 /** Filters accepted by `getTasksByStatus`. */
 export interface StatusQueryFilters {
     /** Keep only tasks whose latest `task_suspended` event carries this reason. */
@@ -284,6 +323,13 @@ export declare class TaskManager {
     cancelTask(taskId: TaskIdentifier, options?: CancelTaskOptions): TaskRecord | null;
     /** Cancel cron schedules by identity filter. */
     cancelCron(filters?: CancelCronFilters, options?: CancelTaskOptions): CancelCronResult;
+    /**
+     * Spawn one cron run immediately, without waiting for its window.
+     *
+     * Only a run row is created: the schedule row is untouched, so a cancelled or
+     * paused schedule is not revived and `next_run_time` does not move.
+     */
+    runCronNow<T = unknown>(scheduleId: TaskIdentifier, payload?: T, options?: RunCronNowOptions): CronSpawnResult;
     /** Transition a running or pending task to `paused`. */
     pauseTask(taskId: TaskIdentifier): TaskRecord | null;
     /** Run retention cleanup now, optionally overriding the policy. */
@@ -376,7 +422,19 @@ export declare class DatabaseAdapter {
     /** Read the persisted scheduling fields (used by the completion path). */
     getCronScheduleState(taskId: TaskIdentifier): CronScheduleState | null;
 
-    claimTask(taskNames: string[], workerId: string): TaskRecord | null;
+    claimTask(taskNames: string[], workerId: string, options?: ClaimTaskOptions): TaskRecord | null;
+    /**
+     * Spawn one run row for a cron schedule and advance the schedule, atomically.
+     *
+     * Both statements share one transaction, so a crash in between rolls the whole
+     * round back instead of producing a second run on the next tick.
+     */
+    spawnCronRun(params: CronSpawnInput): CronSpawnResult;
+    /**
+     * Advance a schedule past a failed spawn without creating a run row, so the
+     * schedule keeps firing and the error stays visible via `last_error`.
+     */
+    failCronSpawn(params: CronSpawnFailureInput): { next_run_time: number };
     updateTaskStatus(taskId: TaskIdentifier, status: TaskStatus, extra?: TaskStatusUpdate): void;
     recordCronWindowSkipped(taskId: TaskIdentifier, details: CronSkipDetails): boolean;
     recordTaskProgress(taskId: TaskIdentifier, progress: TaskProgressSnapshot, workerId?: string | null): number;
@@ -406,7 +464,7 @@ export declare class DatabaseAdapter {
     getWorkflowAudit(rootId: TaskIdentifier, options?: WorkflowAuditQueryOptions): WorkflowAuditView;
     getWorkflowAuditSummary(rootId: TaskIdentifier): WorkflowAuditSummary;
 
-    getCronSchedules(filters?: CronScheduleFilters, registeredNames?: string[] | null): CronSchedule[];
+    getCronSchedules(filters?: CronScheduleFilters, registeredNames?: string[] | null, options?: CronScheduleQueryOptions): CronSchedule[];
     pruneCronSchedules(registeredNames: string[], reason?: string): PruneCronResult;
     getCronScheduleStats(registeredNames?: string[] | null): CronScheduleStats;
 
