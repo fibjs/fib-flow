@@ -790,6 +790,237 @@ describe('Cron spawn mode', () => {
         }
     });
 
+    it('should bound the run-outcome events too, not just spawn events', () => {
+        // `task_cron_run_failed` / `task_cron_run_recovered` are written on the
+        // schedule row, which retention never collects. They must be part of the
+        // capped round-event family, otherwise the earlier fix just moved the leak
+        // from one event name to another.
+        taskManager.use('spawn_capped_outcome', () => {
+            throw new Error('always');
+        });
+        taskManager.db.setup();
+
+        const scheduleId = taskManager.cron('spawn_capped_outcome', '* * * * * *', {}, { maxInstances: 0 });
+        taskManager.start();
+
+        try {
+            assert.ok(
+                waitFor(() => taskManager.getTasks({ name: 'spawn_capped_outcome', type: 'async' }).length >= 8, 20000),
+                'expected several rounds'
+            );
+
+            const roundEvents = taskManager.getTaskEvents(scheduleId).filter(event => [
+                'task_cron_spawned',
+                'task_cron_spawn_failed',
+                'task_cron_missed',
+                'task_cron_overlap_skipped',
+                'task_cron_run_failed',
+                'task_cron_run_recovered'
+            ].includes(event.event_type));
+
+            assert.ok(
+                roundEvents.length <= 20,
+                `all round events must stay bounded, got ${roundEvents.length}`
+            );
+        } finally {
+            taskManager.stop();
+        }
+    });
+
+    it('should emit task_cron_run_recovered when a run succeeds again', () => {
+        // The clearing signal must be observable, otherwise a consumer cannot tell
+        // "recovered" from "never failed".
+        let shouldFail = true;
+        taskManager.use('spawn_outcome_recover', () => {
+            if (shouldFail) {
+                throw new Error('boom');
+            }
+            return 'ok';
+        });
+        taskManager.db.setup();
+
+        const scheduleId = taskManager.cron('spawn_outcome_recover', '* * * * * *', {}, { maxInstances: 0 });
+        taskManager.start();
+
+        try {
+            assert.ok(
+                waitFor(() => /boom/.test(taskManager.getTask(scheduleId).error || ''), 12000),
+                'expected the failure to be visible'
+            );
+
+            shouldFail = false;
+
+            assert.ok(
+                waitFor(() => taskManager.getTask(scheduleId).error === null, 12000),
+                'expected the error to clear'
+            );
+
+            const types = taskManager.getTaskEvents(scheduleId).map(event => event.event_type);
+            assert.ok(types.includes('task_cron_run_recovered'), 'the recovery must be recorded');
+        } finally {
+            taskManager.stop();
+        }
+    });
+
+    it('should keep the failure signal visible while a slow run is in flight', () => {
+        // Clearing `error` at spawn time made a failing schedule look healthy for
+        // the whole duration of each run. With a handler slower than the period that
+        // is most of the time.
+        let fail = true;
+        taskManager.use('spawn_slow_fail', () => {
+            coroutine.sleep(1200);
+            if (fail) {
+                throw new Error('slow boom');
+            }
+            return 'ok';
+        });
+        taskManager.db.setup();
+
+        const scheduleId = taskManager.cron('spawn_slow_fail', '* * * * * *', {}, { maxInstances: 0 });
+        taskManager.start();
+
+        try {
+            assert.ok(
+                waitFor(() => /slow boom/.test(taskManager.getTask(scheduleId).error || ''), 12000),
+                'expected the failure to show up'
+            );
+
+            // Sample across a few periods: the signal must stay set.
+            let emptySamples = 0;
+            for (let i = 0; i < 10; i++) {
+                coroutine.sleep(200);
+                if (taskManager.getTask(scheduleId).error === null) {
+                    emptySamples++;
+                }
+            }
+            assert.equal(emptySamples, 0, 'a failing schedule must not report a blank error between rounds');
+        } finally {
+            fail = false;
+            taskManager.stop();
+        }
+    });
+
+    it('should not let a manual run block or taint its schedule', () => {
+        // One handler name means a manual task shares `name` and `tag` with the
+        // schedule's own runs. Counting or reporting by those would let a user
+        // clicking "run now" starve the tick and overwrite the schedule's health.
+        const tag = 'taskdef:shared';
+        let cronRounds = 0;
+        taskManager.use('spawn_manual_scope', (task) => {
+            if (task.payload && task.payload.manual === 'fail') {
+                throw new Error('manual boom');
+            }
+            if (task.payload && task.payload.manual === 'slow') {
+                coroutine.sleep(4000);
+                return 'slow done';
+            }
+            cronRounds++;
+            return 'ok';
+        });
+        taskManager.db.setup();
+
+        const scheduleId = taskManager.cron('spawn_manual_scope', '* * * * * *', {}, { tag });
+        taskManager.start();
+
+        try {
+            coroutine.sleep(800);
+
+            // A long manual run must not stop the schedule.
+            taskManager.async('spawn_manual_scope', { manual: 'slow' }, { tag });
+
+            assert.ok(
+                waitFor(() => cronRounds >= 3, 15000),
+                `the schedule must keep firing during a manual run, saw ${cronRounds} rounds`
+            );
+
+            // A failing manual run must not report against the schedule.
+            const beforeManualFailure = taskManager.getTask(scheduleId).error;
+            taskManager.async('spawn_manual_scope', { manual: 'fail' }, { tag });
+
+            assert.ok(
+                waitFor(() => {
+                    const runs = taskManager.getTasks({ name: 'spawn_manual_scope', type: 'async' });
+                    return runs.some(run => run.status === 'failed');
+                }, 12000),
+                'expected the manual run to fail'
+            );
+
+            assert.equal(
+                taskManager.getTask(scheduleId).error,
+                beforeManualFailure,
+                'a manual run must not write to the schedule health'
+            );
+        } finally {
+            taskManager.stop();
+        }
+    });
+
+    it('should count in-flight runs per schedule, not per name', () => {
+        // `(name, cronKey)` is the schedule identity. Two schedules can share name
+        // and tag; counting by those would make them starve each other.
+        taskManager.use('spawn_multi_key', () => 'ok');
+        taskManager.db.setup();
+
+        const first = taskManager.cron('spawn_multi_key', '* * * * * *', {}, { cronKey: 'a', tag: 'same' });
+        const second = taskManager.cron('spawn_multi_key', '* * * * * *', {}, { cronKey: 'b', tag: 'same' });
+        taskManager.start();
+
+        try {
+            assert.ok(
+                waitFor(() => taskManager.getTasks({ name: 'spawn_multi_key', type: 'async' }).length >= 6, 20000),
+                'both schedules must spawn independently'
+            );
+
+            const skippedFirst = taskManager.getTaskEvents(first)
+                .filter(event => event.event_type === 'task_cron_overlap_skipped').length;
+            const skippedSecond = taskManager.getTaskEvents(second)
+                .filter(event => event.event_type === 'task_cron_overlap_skipped').length;
+
+            // A few skips are fine (the default cap is 1 per schedule); what must not
+            // happen is one schedule starving the other for the whole run.
+            const runs = taskManager.getTasks({ name: 'spawn_multi_key', type: 'async' });
+            assert.ok(runs.length >= 6, `expected both schedules to produce runs, got ${runs.length}`);
+            assert.ok(
+                skippedFirst < 20 && skippedSecond < 20,
+                `schedules must not starve each other (skips: ${skippedFirst}/${skippedSecond})`
+            );
+        } finally {
+            taskManager.stop();
+        }
+    });
+
+    it('should not rewrite the schedule signal when the outcome is unchanged', () => {
+        // Every round of a permanently failing schedule would otherwise append a
+        // round event on a row retention never collects. The schedule holds one
+        // signal, not a per-round log — the run rows carry the history.
+        taskManager.use('spawn_signal_dedupe', () => {
+            throw new Error('always');
+        });
+        taskManager.db.setup();
+
+        const scheduleId = taskManager.cron('spawn_signal_dedupe', '* * * * * *', {}, { maxInstances: 0 });
+        taskManager.start();
+
+        try {
+            assert.ok(
+                waitFor(() => taskManager.getTasks({ name: 'spawn_signal_dedupe', type: 'async' }).length >= 6, 20000),
+                'expected several failing rounds'
+            );
+
+            const failedEvents = taskManager.getTaskEvents(scheduleId)
+                .filter(event => event.event_type === 'task_cron_run_failed');
+            assert.ok(
+                failedEvents.length <= 3,
+                `the same failure must not be re-recorded every round, got ${failedEvents.length}`
+            );
+
+            // ...while the signal itself stays visible.
+            assert.match(taskManager.getTask(scheduleId).error || '', /always/);
+        } finally {
+            taskManager.stop();
+        }
+    });
+
     it('should not regress the inline path', () => {
         // Same handler, same expression, default mode: the schedule row runs it and
         // no async row appears. This pins "8.1.0 is additive".

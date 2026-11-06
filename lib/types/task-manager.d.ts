@@ -21,7 +21,6 @@ import type {
     CronScheduleUpsertResult,
     CronOverlapSkipInput,
     CronRunOutcomeInput,
-    CronScheduleInFlightQuery,
     CronSkipDetails,
     CronSpawnFailureInput,
     CronSpawnInput,
@@ -450,9 +449,10 @@ export declare class DatabaseAdapter {
     failCronSpawn(params: CronSpawnFailureInput): { next_run_time: number };
     /**
      * Count runs of a schedule that are still `pending` or `running`.
-     * Used to enforce `maxInstances` in spawn mode.
+     * Only runs that schedule spawned are counted (see `schedule_task_id`),
+     * so a manually enqueued task under the same handler name does not count.
      */
-    countScheduleRunsInFlight(params: CronScheduleInFlightQuery): number;
+    countScheduleRunsInFlight(scheduleId: TaskIdentifier): number;
     /**
      * Advance a schedule past a round skipped because too many runs are in flight.
      * Writes no `error`: an overlap skip is expected, not a failure.

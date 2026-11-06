@@ -517,14 +517,6 @@ export interface CronSpawnFailureInput {
     error: string;
 }
 
-/** Input accepted by `adapter.countScheduleRunsInFlight()`. */
-export interface CronScheduleInFlightQuery {
-    /** Schedule name. */
-    name: string;
-    /** Schedule tag; `null` matches untagged runs. */
-    tag?: string | null;
-}
-
 /** Input accepted by `adapter.skipCronRoundForOverlap()`. */
 export interface CronOverlapSkipInput {
     /** Claimed schedule row. */
@@ -537,8 +529,8 @@ export interface CronOverlapSkipInput {
 
 /** Input accepted by `adapter.recordScheduleRunOutcome()`. */
 export interface CronRunOutcomeInput {
-    /** Finished run row; `name` and `tag` identify its schedule. */
-    run: TaskRecord;
+    /** Finished run row id. Its `task_created` event carries the schedule link. */
+    runTaskId: TaskIdentifier;
     /** Failure text, or `null` to clear a previous failure. */
     error: string | null;
 }
