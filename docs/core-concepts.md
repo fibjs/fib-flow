@@ -248,6 +248,9 @@ Properties that hold in `spawn` mode:
   The cap is persisted (in `fib_flow_meta`, so no schema change), which means it
   survives a restart even on a tick that runs before the caller re-registers the
   schedule. `getCronSchedules()[].max_instances` reports the effective value.
+  **Omitting the option on a later `cron()` keeps the stored value** — `cron()` is
+  an idempotent upsert, so an absent field means "leave it alone". Pass `null` to
+  reset to the default, `0` for unlimited.
 - **A failing round leaves its reason on the schedule row.** The failure itself
   lands on the run row (`status: 'failed'`), but the reason is mirrored onto the
   schedule's `error`, so `getCronSchedules()[].last_error` does not stay empty

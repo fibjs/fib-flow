@@ -4,9 +4,10 @@ All notable changes to this project are documented in this file.
 
 ## 8.1.0
 
-Cron schedules can now be separated from the runs they produce. This is a purely
-additive release: the default mode keeps 8.0.1 semantics byte for byte, so
-upgrading changes no behaviour until `cronMode` is set explicitly.
+Cron schedules can now be separated from the runs they produce. The default mode
+keeps 8.0.1 semantics byte for byte, so upgrading changes no behaviour until
+`cronMode` is set explicitly — with two API-level notes listed under *Behaviour
+changes* below, both reachable only if you opt into `'spawn'`.
 
 ### Added
 
@@ -92,6 +93,25 @@ upgrading changes no behaviour until `cronMode` is set explicitly.
   same unbounded shape the earlier spawn-event cap fixed, just under another event
   name. `task_cron_run_failed` / `task_cron_run_recovered` are now both deduplicated
   and part of the capped round-event family.
+- **Omitting `maxInstances` keeps the stored value.** `cron()` is an idempotent
+  upsert — every call restates the same configuration — so an absent field means
+  "leave it alone", matching how `timezone` / `catchUp` re-registration behaves.
+  It used to fall back to the default, which silently wiped a non-default cap on
+  every re-registration (measured: `maxInstances: 7` → a later `cron()` without the
+  option → `1`), and because the value is persisted the wipe survived restarts.
+  Pass `null` to reset explicitly, `0` for unlimited.
+
+### Behaviour changes
+
+Both are reachable only with `cronMode: 'spawn'`.
+
+- **`runCronNow()` throws when `maxInstances` is reached.** Previously it created
+  the run regardless, while that run still occupied the cap, so the scheduled
+  rounds were skipped for as long as it lived. A caller that explicitly asked for a
+  run now gets an error it can surface; the message names the escape hatch
+  (`ignoreMaxInstances: true`) and is safe to show to a user.
+- **`getCronSchedules()` gained a field** (`max_instances`). Code that asserts on
+  the exact key set of a schedule object must allow it.
 
 ### Consistency fixes on top of the above
 
