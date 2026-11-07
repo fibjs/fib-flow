@@ -447,8 +447,16 @@ export interface CronScheduleStats {
 
 export interface CronScheduleFilters {
     name?: string;
+    /**
+     * Schedule identity key. Together with `name` this is the schedule's unique
+     * identity — with several schedules per name, filtering by `name` alone
+     * returns an arbitrary row rather than the one asked for.
+     */
+    cronKey?: string;
     tag?: string;
     status?: TaskStatus;
+    /** Match any of these statuses; alternative to `status`, not a supplement. */
+    statuses?: TaskStatus[];
 }
 
 export interface CancelCronFilters {
