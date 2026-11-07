@@ -1590,6 +1590,52 @@ describe('Cron spawn mode', () => {
         assert.equal(taskManager.getTask(third).status, 'cancelled');
     });
 
+    it('should filter schedules by cronKey and by multiple statuses', () => {
+        // `cronKey` was missing from `CronScheduleFilters` while `task-host.ts` was
+        // already passing it — silently ignored, so a caller asking for one schedule
+        // got every schedule of that name. With a single schedule per definition that
+        // looks fine; with several it is an arbitrary row, not an error.
+        taskManager.use('spawn_sched_filter', () => 'ok');
+        taskManager.db.setup();
+
+        taskManager.cron('spawn_sched_filter', '0 0 1 1 *', {}, { cronKey: 'eu' });
+        taskManager.cron('spawn_sched_filter', '0 0 1 1 *', {}, { cronKey: 'us' });
+        taskManager.cron('spawn_sched_filter', '0 0 1 1 *', {}, { cronKey: 'ap' });
+
+        const keysFor = (filters) => taskManager.getCronSchedules(filters)
+            .map(schedule => schedule.cron_key)
+            .sort();
+
+        assert.deepEqual(keysFor({ name: 'spawn_sched_filter' }), ['ap', 'eu', 'us']);
+        assert.deepEqual(
+            keysFor({ name: 'spawn_sched_filter', cronKey: 'us' }),
+            ['us'],
+            'cronKey must narrow within the name, not be ignored'
+        );
+        assert.deepEqual(keysFor({ cronKey: 'eu' }), ['eu']);
+
+        taskManager.cancelCron({ name: 'spawn_sched_filter', cronKey: 'ap' });
+
+        assert.deepEqual(keysFor({ status: 'pending' }), ['eu', 'us']);
+        assert.deepEqual(keysFor({ statuses: ['pending'] }), ['eu', 'us']);
+        assert.deepEqual(keysFor({ statuses: ['cancelled'] }), ['ap']);
+        assert.deepEqual(
+            keysFor({ statuses: ['pending', 'cancelled'] }),
+            ['ap', 'eu', 'us'],
+            'both statuses must match'
+        );
+
+        // Same contract as the task query: the two readings are alternatives.
+        assert.throws(
+            () => taskManager.getCronSchedules({ status: 'pending', statuses: ['cancelled'] }),
+            /either "status" or "statuses"/
+        );
+        assert.throws(
+            () => taskManager.getCronSchedules({ statuses: [] }),
+            /non-empty array/
+        );
+    });
+
     it('should not regress the inline path', () => {
         // Same handler, same expression, default mode: the schedule row runs it and
         // no async row appears. This pins "8.1.0 is additive".

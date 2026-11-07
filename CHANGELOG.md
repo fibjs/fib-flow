@@ -2,12 +2,9 @@
 
 All notable changes to this project are documented in this file.
 
-## 8.1.0
+## 8.2.0
 
-Cron schedules can now be separated from the runs they produce. The default mode
-keeps 8.0.1 semantics byte for byte, so upgrading changes no behaviour until
-`cronMode` is set explicitly — with two API-level notes listed under *Behaviour
-changes* below, both reachable only if you opt into `'spawn'`.
+Batch task control, and a query surface that can express "anything unfinished".
 
 ### Added
 
@@ -22,7 +19,32 @@ changes* below, both reachable only if you opt into `'spawn'`.
   alone could not express "anything unfinished", so callers fetched every row and
   filtered in memory, or issued one query per status. Supplying both `status` and
   `statuses` is rejected: "this one" and "any of these" cannot both hold, and
-  guessing would hide the mistake.
+  guessing would hide the mistake. `getCronSchedules()` accepts the same pair.
+- **`getCronSchedules({ cronKey })`** — the schedule identity key was missing from
+  the filter while callers were already passing it, so it was silently ignored and
+  a caller asking for one schedule received every schedule of that name. With one
+  schedule per definition that is harmless; with several it is an arbitrary row
+  rather than an error.
+
+### Fixed
+
+- **`cancelCron()` no longer aborts on a scheduling race.** It reads the rows, then
+  cancels them one by one. A spawn-mode schedule returns to `pending` immediately
+  after spawning and the claim loop can take it to `running` in between; when that
+  happened, `cancelTask()` rejected the row and the exception escaped `cancelCron()`
+  — the caller saw one throw instead of a per-row outcome, and the remaining rows
+  were never cancelled. Such a row is now counted as `skipped`, matching
+  `cancelTasks()`. (Present since 8.0.x; found because it flaked on MySQL.)
+
+## 8.1.0
+
+Cron schedules can now be separated from the runs they produce. The default mode
+keeps 8.0.1 semantics byte for byte, so upgrading changes no behaviour until
+`cronMode` is set explicitly — with two API-level notes listed under *Behaviour
+changes* below, both reachable only if you opt into `'spawn'`.
+
+### Added
+
 - **`cronMode: 'inline' | 'spawn'`** (manager option, default `'inline'`).
   In `'spawn'` mode a cron row never executes user code: each round inserts an
   independent `async` run row and advances the schedule inside a single
@@ -127,6 +149,14 @@ Both are reachable only with `cronMode: 'spawn'`.
 
 ### Consistency fixes on top of the above
 
+- **`cancelCron()` no longer aborts on a scheduling race.** It reads the rows, then
+  cancels them one by one. A spawn-mode schedule returns to `pending` immediately
+  after spawning and the claim loop can take it to `running` in between; when that
+  happened, `cancelTask()` rejected the row and the exception escaped `cancelCron()`
+  — the caller saw one throw instead of a per-row outcome, and the remaining rows
+  were never cancelled. Such a row is now counted as `skipped`, matching
+  `cancelTasks()`. (Pre-existing since 8.0.x, found because it flaked on MySQL.)
+
 - **`runCronNow()` obeys `maxInstances`.** A manual trigger produces a run of the
   schedule, so it counted toward the cap while being exempt from it: three triggers
   created three runs at `maxInstances: 1`, and the scheduled rounds were then
@@ -171,8 +201,7 @@ Both are reachable only with `cronMode: 'spawn'`.
   made the schedule report a previous execution while the run rows reported the
   current one. Both modes now agree that `result` on a spawn-mode schedule is
   `NULL` (read the run rows).
-- **A rejected `cron()` leaves no trace.** The `maxInstances` policy was persisted
-  before the cron expression was validated, so an invalid expression left an
+- **A rejected `cron()` leaves no trace.** The `maxInstances` policy was persisted  before the cron expression was validated, so an invalid expression left an
   orphan `schedule:*` row behind. That row in turn made `_hasRetentionWork()`
   report work, so the following ticks ran a full retention pass for nothing until
   the sweep collected it. All validation now happens before anything is written.
@@ -215,7 +244,7 @@ Both are reachable only with `cronMode: 'spawn'`.
 
 ### Test suite
 
-- Verified against SQLite, PostgreSQL 16 and MySQL 8.0 (247 passing, 1 skipped on
+- Verified against SQLite, PostgreSQL 16 and MySQL 8.0 (248 passing, 1 skipped on
   each; `FIB_FLOW_TEST_DB` selects the backend).
 - Two pre-existing tests were made deterministic. Both timed on wall-clock
   seconds and failed intermittently on the network backends:
@@ -228,7 +257,7 @@ Both are reachable only with `cronMode: 'spawn'`.
     reach `pending` only. A cron row also passes through `pending` between
     "children completed" and "the round's final execution", where `result` still
     holds the child entries. It now waits for the round result.
-- The spawn suite runs in `test/cron_spawn_test.js` (48 cases).
+- The spawn suite runs in `test/cron_spawn_test.js` (49 cases).
 
 ## 8.0.1
 

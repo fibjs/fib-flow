@@ -500,6 +500,7 @@ getTasksByTag(tag)
 getTaskStatsByTag(tag, status)
 
 // List cron schedules (includes an orphan flag when the handler is gone)
+// filters: { name, cronKey, tag, status } or { ..., statuses: [...] }
 getCronSchedules(filters)
 
 // Spawn one cron run immediately (schedule row untouched)
