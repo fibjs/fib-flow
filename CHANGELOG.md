@@ -11,6 +11,18 @@ changes* below, both reachable only if you opt into `'spawn'`.
 
 ### Added
 
+- **`cancelTasks(filters, options)`** — the batch counterpart of `cancelTask()`,
+  shaped like the existing `cancelCron()`. Cleaning up "everything still in flight
+  for this handler" previously meant `getTasks()` + a per-row `cancelTask()`, which
+  races with whatever creates new rows (for a spawn-mode schedule, the very next
+  tick) and cannot express "any non-terminal status" in SQL. `running` rows are
+  skipped and reported, never cancelled; at least one filter is required so a typo
+  cannot wipe the table.
+- **`getTasks({ statuses: [...] })`** — match any of several statuses. `status`
+  alone could not express "anything unfinished", so callers fetched every row and
+  filtered in memory, or issued one query per status. Supplying both `status` and
+  `statuses` is rejected: "this one" and "any of these" cannot both hold, and
+  guessing would hide the mistake.
 - **`cronMode: 'inline' | 'spawn'`** (manager option, default `'inline'`).
   In `'spawn'` mode a cron row never executes user code: each round inserts an
   independent `async` run row and advances the schedule inside a single
@@ -203,7 +215,7 @@ Both are reachable only with `cronMode: 'spawn'`.
 
 ### Test suite
 
-- Verified against SQLite, PostgreSQL 16 and MySQL 8.0 (244 passing, 1 skipped on
+- Verified against SQLite, PostgreSQL 16 and MySQL 8.0 (247 passing, 1 skipped on
   each; `FIB_FLOW_TEST_DB` selects the backend).
 - Two pre-existing tests were made deterministic. Both timed on wall-clock
   seconds and failed intermittently on the network backends:
@@ -216,7 +228,7 @@ Both are reachable only with `cronMode: 'spawn'`.
     reach `pending` only. A cron row also passes through `pending` between
     "children completed" and "the round's final execution", where `result` still
     holds the child entries. It now waits for the round result.
-- The spawn suite runs in `test/cron_spawn_test.js` (45 cases).
+- The spawn suite runs in `test/cron_spawn_test.js` (48 cases).
 
 ## 8.0.1
 

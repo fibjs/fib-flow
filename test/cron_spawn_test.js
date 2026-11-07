@@ -1472,6 +1472,124 @@ describe('Cron spawn mode', () => {
         assert.equal(docRow.total, 1, 'the documented spelling must be authoritative');
     });
 
+    it('should cancel a batch of non-terminal tasks and skip running ones', () => {
+        // Cleaning up "everything still in flight for this handler" used to require
+        // `getTasks()` + a per-row `cancelTask()`, which races with whatever creates
+        // new rows and cannot express "any non-terminal status" in SQL.
+        taskManager.use('spawn_batch_cancel', () => 'ok');
+        taskManager.db.setup();
+
+        for (let i = 0; i < 5; i++) {
+            taskManager.async('spawn_batch_cancel', { i }, { delay: 3600 });
+        }
+        assert.equal(
+            taskManager.getTasks({ name: 'spawn_batch_cancel', type: 'async' }).length,
+            5
+        );
+
+        const summary = taskManager.cancelTasks(
+            { name: 'spawn_batch_cancel', type: 'async' },
+            { reason: 'definition removed' }
+        );
+        assert.equal(summary.cancelled, 5);
+        assert.equal(summary.skipped, 0);
+        assert.equal(summary.taskIds.length, 5);
+
+        const rows = taskManager.getTasks({ name: 'spawn_batch_cancel', type: 'async' });
+        for (const row of rows) {
+            assert.equal(row.status, 'cancelled');
+            assert.equal(row.error, 'definition removed');
+        }
+
+        // The audit trail matches a single-row cancellation.
+        const types = taskManager.getTaskEvents(rows[0].id).map(event => event.event_type);
+        assert.ok(types.includes('task_cancelled'));
+    });
+
+    it('should skip running rows in a batch cancel and refuse an unfiltered one', () => {
+        // A running row belongs to its in-flight handler until it reports a terminal
+        // state (`cancelTask` rejects it). The batch must report the skip rather than
+        // failing, and must not silently leave the caller thinking everything was
+        // cancelled.
+        taskManager.use('spawn_batch_running', () => {
+            coroutine.sleep(3000);
+            return 'ok';
+        });
+        taskManager.db.setup();
+
+        taskManager.async('spawn_batch_running', {});
+        taskManager.start();
+
+        try {
+            assert.ok(
+                waitFor(() => {
+                    const [row] = taskManager.getTasks({ name: 'spawn_batch_running', type: 'async' });
+                    return row && row.status === 'running';
+                }, 8000),
+                'expected the run to start'
+            );
+
+            const summary = taskManager.cancelTasks({ name: 'spawn_batch_running' });
+            assert.equal(summary.cancelled, 0);
+            assert.equal(summary.skipped, 1, 'the running row must be reported as skipped');
+            assert.deepEqual(summary.taskIds, []);
+
+            const [row] = taskManager.getTasks({ name: 'spawn_batch_running', type: 'async' });
+            assert.equal(row.status, 'running', 'a running row must be left alone');
+        } finally {
+            taskManager.stop();
+        }
+
+        // An unfiltered batch cancel is one typo away from wiping the table.
+        assert.throws(
+            () => taskManager.cancelTasks({}),
+            /cancelTasks requires at least one filter/
+        );
+    });
+
+    it('should filter by multiple statuses and reject status + statuses together', () => {
+        // `status` alone cannot express "anything unfinished", so callers fetched
+        // everything and filtered in memory (or issued one query per status).
+        taskManager.use('spawn_status_filter', () => 'ok');
+        taskManager.db.setup();
+
+        const first = taskManager.async('spawn_status_filter', {}, { delay: 3600 });
+        taskManager.async('spawn_status_filter', {}, { delay: 3600 });
+        const third = taskManager.async('spawn_status_filter', {}, { delay: 3600 });
+        taskManager.db.pool(conn => conn.execute(
+            `UPDATE fib_flow_tasks SET status = 'completed' WHERE id = ?`,
+            first
+        ));
+
+        assert.equal(taskManager.getTasks({ statuses: ['pending'] }).length, 2);
+        assert.equal(
+            taskManager.getTasks({ statuses: ['pending', 'completed'] }).length,
+            3,
+            'both statuses must match'
+        );
+        assert.equal(taskManager.getTasks({ statuses: ['completed'] }).length, 1);
+        assert.equal(taskManager.getTasks({ status: 'completed' }).length, 1);
+
+        assert.throws(
+            () => taskManager.getTasks({ status: 'pending', statuses: ['running'] }),
+            /either "status" or "statuses"/,
+            'the two readings disagree, so supplying both must be rejected'
+        );
+        assert.throws(
+            () => taskManager.getTasks({ statuses: [] }),
+            /non-empty array/,
+            'an empty list is not "no constraint" — it is a mistake'
+        );
+        assert.throws(
+            () => taskManager.getTasks({ statuses: ['nope'] }),
+            /Invalid status value/
+        );
+
+        // The cancelled row is not special-cased.
+        taskManager.cancelTasks({ name: 'spawn_status_filter' });
+        assert.equal(taskManager.getTask(third).status, 'cancelled');
+    });
+
     it('should not regress the inline path', () => {
         // Same handler, same expression, default mode: the schedule row runs it and
         // no async row appears. This pins "8.1.0 is additive".

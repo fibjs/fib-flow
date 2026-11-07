@@ -8,7 +8,7 @@ A powerful workflow management system built on fibjs for orchestrating complex t
 - **Task Types**: Async tasks and cron jobs with priorities and delays
 - **Cron Execution Modes**: `cronMode: 'spawn'` gives every cron round its own `async` run row, so a suspending or failing round never freezes the schedule
 - **Idempotent Scheduling**: `cron()` upserts per `(name, cronKey)`, so restarts and multi-instance boots never duplicate triggers
-- **Schedule Control**: `cancelCron()` / `cancelTask()` stop schedules without pretending they failed; `getCronSchedules()` and `pruneCronSchedules()` expose orphaned rows
+- **Schedule Control**: `cancelCron()` / `cancelTask()` stop schedules without pretending they failed; `cancelTasks()` does the same for a filtered batch of task rows; `getCronSchedules()` and `pruneCronSchedules()` expose orphaned rows
 - **Per-Schedule Time Zones**: IANA `timezone` per cron job, validated at registration
 - **Catch-Up Policy**: `catchUp: 'once'` runs a missed window, `'skip'` advances past it with an audit trail
 - **State Management**: Comprehensive task lifecycle and state transitions

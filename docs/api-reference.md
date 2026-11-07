@@ -466,7 +466,10 @@ runRetention(policy)
 Cancellation notes:
 
 - `cancelled` is a distinct status. It is not a failure: the row never propagates failure to a parent workflow and is excluded from `failed_tasks` in `getWorkflowAuditSummary()`.
-- Allowed source states are `pending`, `paused`, `failed`, `timeout` and `suspended`. Cancelling a `running` task is rejected — pause it first, or wait for completion.
+- Allowed source states are `pending`, `paused`, `failed`, `timeout` and `suspended`. Cancelling a `running` task is rejected — the in-flight handler owns the row until it reports a terminal state.
+- **`pauseTask()` does not interrupt a handler.** It marks the row `paused` immediately, the handler keeps running to completion, and its terminal-status write is then discarded as stale. The row stays `paused` with whatever `result` it had. `paused` is **not** in the default retention set (`completed`, `permanently_failed`, `cancelled`), so such a row is only collected if you add `paused` to `retention.statuses`.
+  For "stop this work" the least surprising action on a `running` row is usually **nothing**: let it finish, and it settles to `completed` / `permanently_failed` on its own and ages out normally. Pausing is for a row you intend to resume.
+- `cancelTasks(filters)` is the batch form of `cancelTask()`: it cancels every non-terminal row matching the filter, skips (and *reports*) `running` ones, and requires at least one filter so a typo cannot wipe the table.
 - `cancelTask()` throws `Task <id> not found` for an unknown id, instead of failing deeper in the database layer.
 - Cancelled rows are removed by the default retention policy (`statuses` defaults to `completed`, `permanently_failed`, `cancelled`).
 
