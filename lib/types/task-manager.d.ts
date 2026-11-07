@@ -130,7 +130,16 @@ export interface TaskOptions {
     retention_expire_time?: number;
 }
 
-/** Options accepted by `cron()`. */
+/**
+ * Options accepted by `cron()`.
+ *
+ * Note the mixed conventions: `cronKey`, `timezone`, `catchUp`, `maxInstances`
+ * are camelCase while `max_retries`, `retry_interval`, `retention_expire_time`
+ * are snake_case. At runtime the other spelling of each is accepted (with a
+ * warning) — `cron_key` matters most, because an ignored key falls back to
+ * `'default'` and registers the schedule twice. This typed surface, like the
+ * documented one, accepts only the names below.
+ */
 export interface CronOptions extends Omit<TaskOptions, 'delay'> {
     /** Schedule identity; `(name, cronKey)` is unique. Default `'default'`. */
     cronKey?: string;

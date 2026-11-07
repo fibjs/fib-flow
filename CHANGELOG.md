@@ -170,6 +170,14 @@ Both are reachable only with `cronMode: 'spawn'`.
   snake_case key always wins when both are present, and the warning names the
   rename. The documented surface stays snake_case (TypeScript still rejects the
   camelCase form).
+- **The same applies to `cron()` options, where it matters more.** `cron_key` was
+  ignored in favour of the default, so `cron(..., { cron_key: 'eu' })` registered
+  a *second* row identity and the schedule fired twice — a duplicate trigger, not
+  just an ineffective setting. Every `cron()` option now accepts its other
+  spelling (`cron_key`/`cronKey`, `max_instances`/`maxInstances`, `maxRetries`/
+  `max_retries`, …), the documented name winning when both are supplied. The
+  aliases for constructor and `cron()` options are separate, typed lists, since the
+  two APIs mix conventions in opposite directions.
 - **The round payload is the schedule payload, verbatim.** fib-flow does not
   flatten or validate it.
 - **Spawn failures do not stall the schedule.** `next_run_time` advances, the
@@ -195,7 +203,7 @@ Both are reachable only with `cronMode: 'spawn'`.
 
 ### Test suite
 
-- Verified against SQLite, PostgreSQL 16 and MySQL 8.0 (243 passing, 1 skipped on
+- Verified against SQLite, PostgreSQL 16 and MySQL 8.0 (244 passing, 1 skipped on
   each; `FIB_FLOW_TEST_DB` selects the backend).
 - Two pre-existing tests were made deterministic. Both timed on wall-clock
   seconds and failed intermittently on the network backends:
@@ -208,7 +216,7 @@ Both are reachable only with `cronMode: 'spawn'`.
     reach `pending` only. A cron row also passes through `pending` between
     "children completed" and "the round's final execution", where `result` still
     holds the child entries. It now waits for the round result.
-- The spawn suite runs in `test/cron_spawn_test.js` (44 cases).
+- The spawn suite runs in `test/cron_spawn_test.js` (45 cases).
 
 ## 8.0.1
 

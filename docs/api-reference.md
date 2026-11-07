@@ -284,10 +284,17 @@ cron(taskName, cronExpr, payload, options)
 ```
 
 #### Idempotent cron registration
-
 `cron()` is idempotent per `(taskName, cronKey)`: calling it again from a restarted
 process, another instance, or a config reload updates the existing row instead of
 creating a duplicate trigger.
+
+> `cron()` options mix conventions — `cronKey`, `maxInstances`, `timezone`,
+> `catchUp` are camelCase; `max_retries`, `retry_interval`,
+> `retention_expire_time` are snake_case. The other spelling of each is accepted
+> and logged as a warning. **`cron_key` in particular is worth spelling correctly**:
+> an ignored key falls back to `'default'`, which registers the same schedule
+> under a second identity and fires it twice rather than merely failing to apply.
+> The documented spelling wins when both are present.
 
 ```javascript
 // First call inserts, later calls update the same row.

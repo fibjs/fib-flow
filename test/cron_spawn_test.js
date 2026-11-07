@@ -1413,6 +1413,65 @@ describe('Cron spawn mode', () => {
         }
     });
 
+    it('should apply alternate cron() option spellings without splitting the schedule', () => {
+        // `cron_key` is the dangerous one: an ignored key falls back to `'default'`,
+        // so the same schedule is registered under a second identity and fires
+        // twice — a duplicate trigger, not merely an ineffective setting.
+        taskManager.use('spawn_cron_alias', () => 'ok');
+        taskManager.db.setup();
+
+        taskManager.cron('spawn_cron_alias', '0 0 1 1 *', {}, { cronKey: 'k1' });
+        taskManager.cron('spawn_cron_alias', '0 0 1 1 *', {}, { cron_key: 'k2' });
+
+        const keys = taskManager.db.pool(conn => conn.execute(
+            `SELECT cron_key FROM fib_flow_tasks WHERE type = 'cron' AND name = ? ORDER BY id`,
+            'spawn_cron_alias'
+        )).map(row => row.cron_key);
+        assert.deepEqual(
+            keys,
+            ['k1', 'k2'],
+            'cron_key must be honoured as cronKey, not fall back to "default"'
+        );
+
+        // Every other option, supplied only in its alternate spelling.
+        taskManager.cron('spawn_cron_alias', '0 0 1 1 *', {}, {
+            cron_key: 'alt',
+            max_instances: 4,
+            retention_expire_time: 1234,
+            max_retries: 6,
+            retry_interval: 8,
+            priority: 3,
+            timeout: 99,
+            tag: 'ALT_TAG'
+        });
+
+        const row = taskManager.db.pool(conn => conn.execute(
+            `SELECT max_retries, retry_interval, priority, timeout, tag, retention_expire_time
+               FROM fib_flow_tasks WHERE type = 'cron' AND name = ? AND cron_key = 'alt'`,
+            'spawn_cron_alias'
+        ))[0];
+        assert.equal(row.max_retries, 6);
+        assert.equal(row.retry_interval, 8);
+        assert.equal(row.priority, 3);
+        assert.equal(row.timeout, 99);
+        assert.equal(row.tag, 'ALT_TAG');
+        assert.equal(row.retention_expire_time, 1234);
+
+        const [schedule] = taskManager.getCronSchedules({ name: 'spawn_cron_alias' })
+            .filter(item => item.cron_key === 'alt');
+        assert.equal(schedule.max_instances, 4, 'max_instances must be honoured as maxInstances');
+
+        // The documented spelling wins when both are present.
+        taskManager.cron('spawn_cron_alias', '0 0 1 1 *', {}, { cronKey: 'doc', cron_key: 'typo' });
+        const docRow = taskManager.db.pool(conn => conn.execute(
+            `SELECT COUNT(*) AS total FROM fib_flow_tasks
+              WHERE type = 'cron' AND name = ? AND cron_key = ?`,
+            'spawn_cron_alias',
+            'doc'
+        ))[0];
+        assert.equal(docRow.total, 1, 'the documented spelling must be authoritative');
+    });
+
     it('should not regress the inline path', () => {
         // Same handler, same expression, default mode: the schedule row runs it and
         // no async row appears. This pins "8.1.0 is additive".
