@@ -133,6 +133,20 @@ Both are reachable only with `cronMode: 'spawn'`.
   (25ms at 20k queued rows, growing linearly). It now reads the schedule's own
   spawn events, which is O(1) in the queue length; the exact form is used only as
   a fallback when the capped event trail may have been truncated.
+- **The metadata sweep runs on the automatic path.** `pruneScheduleMeta()` was only
+  reachable through `runRetention()`, which an application relying on the default
+  retention window never calls — so in the common deployment the per-schedule
+  policy rows still accumulated. It now runs from `handleTimeoutTasks`, i.e. the
+  sweep the active timer drives. (This is the second time a fix landed on a path
+  production does not take; the lesson is to verify against the timer, not the
+  public entry point.)
+- **Persisting the policy is race-safe.** The write was SELECT-then-INSERT with no
+  conflict handling: two processes starting at once could both see "no row" and
+  both insert, and the loser's `cron()` threw. Three concurrent processes on
+  PostgreSQL reproduced 168 failures with the old shape. The write now retries the
+  update when the insert loses the race, and is deliberately NOT wrapped in a
+  transaction — on PostgreSQL a failed statement aborts the surrounding
+  transaction, so a recovery statement inside it would fail too.
 - **The round payload is the schedule payload, verbatim.** fib-flow does not
   flatten or validate it.
 - **Spawn failures do not stall the schedule.** `next_run_time` advances, the
@@ -158,7 +172,7 @@ Both are reachable only with `cronMode: 'spawn'`.
 
 ### Test suite
 
-- Verified against SQLite, PostgreSQL 16 and MySQL 8.0 (236 passing, 1 skipped on
+- Verified against SQLite, PostgreSQL 16 and MySQL 8.0 (239 passing, 1 skipped on
   each; `FIB_FLOW_TEST_DB` selects the backend).
 - Two pre-existing tests were made deterministic. Both timed on wall-clock
   seconds and failed intermittently on the network backends:
@@ -171,7 +185,7 @@ Both are reachable only with `cronMode: 'spawn'`.
     reach `pending` only. A cron row also passes through `pending` between
     "children completed" and "the round's final execution", where `result` still
     holds the child entries. It now waits for the round result.
-- The spawn suite runs in `test/cron_spawn_test.js` (37 cases).
+- The spawn suite runs in `test/cron_spawn_test.js` (41 cases).
 
 ## 8.0.1
 
