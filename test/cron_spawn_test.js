@@ -1185,6 +1185,42 @@ describe('Cron spawn mode', () => {
         assert.equal(live.max_instances, 3);
     });
 
+    it('should sweep schedule meta on the automatic retention path', () => {
+        // `runRetention()` is optional for an application that relies on the default
+        // retention window: most deployments never call it, and the sweep runs from
+        // the active timer via `handleTimeoutTasks`. Wiring the meta sweep only into
+        // the public entry point would leave it dead in production.
+        taskManager.use('spawn_auto_gc', () => 'ok');
+        taskManager.db.setup();
+
+        const hasMeta = () => taskManager.db.pool(conn => conn.execute(
+            `SELECT COUNT(*) AS total FROM fib_flow_meta WHERE meta_key LIKE ?`,
+            '%spawn_auto_gc%'
+        ))[0].total > 0;
+
+        taskManager.cron('spawn_auto_gc', '0 0 1 1 *', {}, { maxInstances: 2 });
+        assert.ok(hasMeta(), 'registration must persist the policy');
+
+        taskManager.db.pool(conn => conn.execute(
+            `DELETE FROM fib_flow_tasks WHERE type = 'cron' AND name = 'spawn_auto_gc'`
+        ));
+
+        // Walk the automatic path: consume the policy, then hand it to the sweep that
+        // the active timer calls. The throttle is bypassed the same way a real tick
+        // does once it expires.
+        taskManager.options.retention = { expire_time: 1, statuses: ['completed', 'permanently_failed', 'cancelled'] };
+        taskManager.nextRetentionSweepAt = 0;
+        const policy = taskManager._consumeAutoRetentionPolicy(Date.now());
+        assert.ok(policy, 'the sweep must be armed');
+
+        taskManager.db.handleTimeoutTasks({
+            task_heartbeat_interval: 1000,
+            task_heartbeat_timeout: 30000
+        }, policy);
+
+        assert.equal(hasMeta(), false, 'the automatic sweep must prune metadata for a removed schedule');
+    });
+
     it('should not regress the inline path', () => {
         // Same handler, same expression, default mode: the schedule row runs it and
         // no async row appears. This pins "8.1.0 is additive".
