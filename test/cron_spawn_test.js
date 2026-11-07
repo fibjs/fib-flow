@@ -1130,6 +1130,61 @@ describe('Cron spawn mode', () => {
         }
     });
 
+    it('should keep maxInstances when a later cron() omits it', () => {
+        // `cron()` is an idempotent upsert: several call sites re-register the same
+        // schedule without repeating every option. Treating an absent field as
+        // "reset to default" silently wiped a non-default cap on every
+        // re-registration — and, because the value is persisted, across restarts too.
+        taskManager.use('spawn_omit_cap', () => 'ok');
+        taskManager.db.setup();
+
+        taskManager.cron('spawn_omit_cap', '0 0 1 1 *', {}, { maxInstances: 7 });
+        const [first] = taskManager.getCronSchedules({ name: 'spawn_omit_cap' });
+        assert.equal(first.max_instances, 7);
+
+        // Re-register without the option, the way a definition sync would.
+        taskManager.cron('spawn_omit_cap', '0 0 1 1 *', {});
+        const [second] = taskManager.getCronSchedules({ name: 'spawn_omit_cap' });
+        assert.equal(second.max_instances, 7, 'omitting maxInstances must keep the stored value');
+
+        // Explicit reset.
+        taskManager.cron('spawn_omit_cap', '0 0 1 1 *', {}, { maxInstances: null });
+        const [third] = taskManager.getCronSchedules({ name: 'spawn_omit_cap' });
+        assert.equal(third.max_instances, 1, 'an explicit null resets to the default');
+    });
+
+    it('should sweep stored maxInstances for schedules that no longer exist', () => {
+        taskManager.use('spawn_meta_gc_a', () => 'ok');
+        taskManager.use('spawn_meta_gc_b', () => 'ok');
+        taskManager.db.setup();
+
+        // Scope the assertions to this test's two schedules: a shared database may
+        // hold policy rows from other runs, and the sweep legitimately removes
+        // those too.
+        const hasMeta = (name) => taskManager.db.pool(conn => conn.execute(
+            `SELECT COUNT(*) AS total FROM fib_flow_meta WHERE meta_key LIKE ?`,
+            `%${name}%`
+        ))[0].total > 0;
+
+        taskManager.cron('spawn_meta_gc_a', '0 0 1 1 *', {}, { maxInstances: 2 });
+        taskManager.cron('spawn_meta_gc_b', '0 0 1 1 *', {}, { maxInstances: 3 });
+        assert.ok(hasMeta('spawn_meta_gc_a'));
+        assert.ok(hasMeta('spawn_meta_gc_b'));
+
+        // Remove one schedule's row outright, as a deletion would.
+        taskManager.db.pool(conn => conn.execute(
+            `DELETE FROM fib_flow_tasks WHERE type = 'cron' AND name = 'spawn_meta_gc_a'`
+        ));
+
+        const pruned = taskManager.db.pruneScheduleMeta();
+        assert.ok(pruned >= 1, 'the orphaned policy row must be removed');
+        assert.equal(hasMeta('spawn_meta_gc_a'), false, 'the removed schedule loses its policy');
+        assert.equal(hasMeta('spawn_meta_gc_b'), true, 'the live schedule keeps its policy');
+
+        const [live] = taskManager.getCronSchedules({ name: 'spawn_meta_gc_b' });
+        assert.equal(live.max_instances, 3);
+    });
+
     it('should not regress the inline path', () => {
         // Same handler, same expression, default mode: the schedule row runs it and
         // no async row appears. This pins "8.1.0 is additive".

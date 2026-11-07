@@ -139,8 +139,12 @@ export interface CronOptions extends Omit<TaskOptions, 'delay'> {
      * cap (rounds may overlap freely). A round that would exceed the cap is skipped:
      * `next_run_time` still advances and a `task_cron_overlap_skipped` event is
      * recorded, but no run row is created and `error` is left alone.
+     *
+     * **Omitting this option on a later `cron()` keeps the stored value** — `cron()`
+     * is an idempotent upsert, so an absent field means "leave it alone". Pass
+     * `null` to reset to the default. `runCronNow()` counts toward the same cap.
      */
-    maxInstances?: number;
+    maxInstances?: number | null;
 }
 
 export interface SuspensionOptions {
@@ -473,6 +477,8 @@ export declare class DatabaseAdapter {
     setScheduleMaxInstances(scheduleName: string, cronKey: string, maxInstances: number | null): void;
     /** Read a persisted `maxInstances` policy; `undefined` when none is stored. */
     getScheduleMaxInstances(scheduleName: string, cronKey: string): number | null | undefined;
+    /** Delete per-schedule `fib_flow_meta` rows whose schedule row no longer exists. */
+    pruneScheduleMeta(): number;
     updateTaskStatus(taskId: TaskIdentifier, status: TaskStatus, extra?: TaskStatusUpdate): void;
     recordCronWindowSkipped(taskId: TaskIdentifier, details: CronSkipDetails): boolean;
     recordTaskProgress(taskId: TaskIdentifier, progress: TaskProgressSnapshot, workerId?: string | null): number;
