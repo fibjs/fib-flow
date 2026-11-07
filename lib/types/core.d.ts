@@ -238,6 +238,12 @@ export interface SubTaskDefinition {
 export interface TaskQueryFilters {
     tag?: string;
     status?: TaskStatus;
+    /**
+     * Match any of these statuses. Alternative to `status`; supplying both is
+     * rejected rather than resolved, because "this one" and "any of these" cannot
+     * both hold.
+     */
+    statuses?: TaskStatus[];
     name?: string;
     type?: TaskType;
     worker_id?: string;

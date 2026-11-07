@@ -228,10 +228,26 @@ export interface ResumeTaskOptions {
     resume_reason?: string;
 }
 
-/** Options accepted by `cancelTask` / `cancelCron`. */
+/** Options accepted by `cancelTask` / `cancelCron` / `cancelTasks`. */
 export interface CancelTaskOptions {
     /** Stored as the task `error` and recorded in the `task_cancelled` event. */
     reason?: string;
+}
+
+/**
+ * Filters accepted by `cancelTasks`.
+ *
+ * At least one is required: an unfiltered batch cancel would be one typo away from
+ * wiping every row in the table. `statuses` alone is allowed, since "cancel
+ * everything still unfinished" is a legitimate operator action.
+ */
+export interface CancelTasksFilters {
+    name?: string;
+    tag?: string;
+    type?: TaskType;
+    cronKey?: string;
+    /** Defaults to every non-terminal status. */
+    statuses?: TaskStatus[];
 }
 
 /** Options accepted by `runCronNow`. */
@@ -358,6 +374,17 @@ export declare class TaskManager {
     resumeTask(taskId: TaskIdentifier, options?: ResumeTaskOptions): TaskRecord | null;
     /** Cancel a task. Running tasks are rejected; returns the updated row. */
     cancelTask(taskId: TaskIdentifier, options?: CancelTaskOptions): TaskRecord | null;
+    /**
+     * Cancel every non-terminal task matching a filter, skipping `running` rows.
+     *
+     * The batch counterpart of `cancelTask()`. Enumerating with `getTasks()` and
+     * cancelling one by one races with whatever creates new rows (for a
+     * spawn-mode schedule, the next tick), and `getTasks()` could not express
+     * "any non-terminal status".
+     *
+     * @returns `cancelled` / `skipped` / `taskIds`, matching `cancelCron()`.
+     */
+    cancelTasks(filters?: CancelTasksFilters, options?: CancelTaskOptions): CancelCronResult;
     /** Cancel cron schedules by identity filter. */
     cancelCron(filters?: CancelCronFilters, options?: CancelTaskOptions): CancelCronResult;
     /**
