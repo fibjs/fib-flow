@@ -344,7 +344,7 @@ const spawn = new TaskManager({ dbConnection: 'sqlite:jobs.db', cronMode: 'spawn
 | Handler suspends | schedule stalls until `resumeTask()` | schedule keeps ticking |
 | Schedule `result` | overwritten each round | never written |
 | Schedule attempts / claim events | one attempt + two events per round | none (bounded tail of round events) |
-| Handler `max_concurrent_tasks` | can starve the schedule | gates runs only |
+| Handler `max_concurrent_tasks` | can starve the schedule | gates runs only (manager-level limit still delays ticks in both modes) |
 | Overlapping rounds | impossible (the row is `running`) | `maxInstances`, default `1`; excess rounds are skipped |
 | Failure visibility | schedule row goes `failed` with the error | schedule stays `pending`; the reason is mirrored to `last_error` |
 | Orphan schedule (handler gone) | row never claimed, stays `pending` | round skipped, no run rows created |

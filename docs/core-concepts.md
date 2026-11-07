@@ -259,8 +259,13 @@ Properties that hold in `spawn` mode:
   blank for the whole duration of each run. Note that the schedule status stays
   `pending` — it keeps firing — so a consumer deciding "is this schedule healthy?"
   must read `last_error`, not only `status`.
-- **Handler concurrency limits do not starve the schedule.** `max_concurrent_tasks`
-  gates runs, not the schedule tick.
+- **Per-handler concurrency limits do not starve the schedule.** A handler's
+  `max_concurrent_tasks` gates that handler's runs, not the schedule tick — the
+  schedule stays claimable even while its runs are saturated.
+  This is scoped to the **per-handler** limit. The manager-level
+  `max_concurrent_tasks` still bounds how many tasks the processing loop claims at
+  once, so a globally saturated worker delays ticks in **both** modes (identical
+  behaviour, not a spawn regression).
 - **An orphan schedule does not spawn.** If a schedule's handler is no longer
   registered, the round is skipped rather than spawning a run row nobody can
   claim — such a row would never reach a terminal state and never become a
