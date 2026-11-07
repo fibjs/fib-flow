@@ -409,6 +409,11 @@ export interface CronSchedule {
     cron_tz: string | null;
     cron_catch_up: CronCatchUp;
     retention_expire_time: number | null;
+    /**
+     * Effective overlap cap in spawn mode; `null` means unlimited, `undefined`
+     * when the schedule carries no persisted policy (the default of `1` applies).
+     */
+    max_instances?: number | null;
     next_run_time: number;
     status: TaskStatus;
     retry_count: number;

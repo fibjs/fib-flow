@@ -218,6 +218,11 @@ export interface CancelTaskOptions {
 export interface RunCronNowOptions {
     /** Recorded on the `task_cron_spawned` event metadata. Default `'manual'`. */
     trigger?: string;
+    /**
+     * Bypass `maxInstances`. A manual trigger counts toward the cap like any other
+     * run of the schedule, so this is the explicit way to force one anyway.
+     */
+    ignoreMaxInstances?: boolean;
 }
 
 /** Options accepted by `adapter.claimTask()`. */
@@ -464,6 +469,10 @@ export declare class DatabaseAdapter {
      * Pass `error: null` on success to clear a previous failure.
      */
     recordScheduleRunOutcome(params: CronRunOutcomeInput): number;
+    /** Persist the per-schedule `maxInstances` policy (stored in `fib_flow_meta`). */
+    setScheduleMaxInstances(scheduleName: string, cronKey: string, maxInstances: number | null): void;
+    /** Read a persisted `maxInstances` policy; `undefined` when none is stored. */
+    getScheduleMaxInstances(scheduleName: string, cronKey: string): number | null | undefined;
     updateTaskStatus(taskId: TaskIdentifier, status: TaskStatus, extra?: TaskStatusUpdate): void;
     recordCronWindowSkipped(taskId: TaskIdentifier, details: CronSkipDetails): boolean;
     recordTaskProgress(taskId: TaskIdentifier, progress: TaskProgressSnapshot, workerId?: string | null): number;

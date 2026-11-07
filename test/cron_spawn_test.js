@@ -499,8 +499,10 @@ describe('Cron spawn mode', () => {
 
         const scheduleId = taskManager.cron('spawn_manual_bound', '0 0 1 1 *', {});
 
+        // `ignoreMaxInstances`: this asserts the event trail stays bounded, not the
+        // overlap cap (which the following cases cover).
         for (let i = 0; i < 30; i++) {
-            taskManager.runCronNow(scheduleId, { i });
+            taskManager.runCronNow(scheduleId, { i }, { ignoreMaxInstances: true });
         }
 
         const roundEvents = taskManager.getTaskEvents(scheduleId).filter(event =>
@@ -1016,6 +1018,113 @@ describe('Cron spawn mode', () => {
 
             // ...while the signal itself stays visible.
             assert.match(taskManager.getTask(scheduleId).error || '', /always/);
+        } finally {
+            taskManager.stop();
+        }
+    });
+
+    it('should apply maxInstances to runCronNow too', () => {
+        // A manual trigger creates a run of this schedule, so it must count toward
+        // the cap. The alternative — exempt from the cap but still occupying it —
+        // would be two answers to one question, and a user clicking "run now" would
+        // silently skip the next scheduled round.
+        taskManager.use('spawn_manual_cap', () => {
+            coroutine.sleep(3000);
+            return 'ok';
+        });
+        taskManager.db.setup();
+
+        const scheduleId = taskManager.cron('spawn_manual_cap', '0 0 1 1 *', {});
+
+        taskManager.runCronNow(scheduleId, { n: 1 });
+
+        assert.throws(
+            () => taskManager.runCronNow(scheduleId, { n: 2 }),
+            /already has 1 run\(s\) in flight/,
+            'the second manual trigger must hit the same cap as a scheduled round'
+        );
+
+        // Forcing is possible, and explicit.
+        const forced = taskManager.runCronNow(scheduleId, { n: 3 }, { ignoreMaxInstances: true });
+        assert.ok(forced.taskId, 'ignoreMaxInstances must create the run');
+        assert.equal(taskManager.getTasks({ name: 'spawn_manual_cap', type: 'async' }).length, 2);
+    });
+
+    it('should persist maxInstances across a restart', () => {
+        // The cap used to live in memory only, so any tick that ran before the caller
+        // re-registered the schedule silently reverted to 1.
+        const conn = 'sqlite:/tmp/fibflow_maxinst_persist.sqlite';
+        const first = new TaskManager({ dbConnection: conn, poll_interval: 100, cronMode: 'spawn' });
+        first.db.setup();
+        first.db.clearTasks();
+        first.use('spawn_persist', () => 'ok');
+        const scheduleId = first.cron('spawn_persist', '0 0 1 1 *', {}, { maxInstances: 3 });
+        first.db.close();
+
+        const second = new TaskManager({ dbConnection: conn, poll_interval: 100, cronMode: 'spawn' });
+        second.use('spawn_persist', () => 'ok');
+        try {
+            const row = second.db.getTask(scheduleId);
+            assert.equal(
+                second._getScheduleMaxInstances(row),
+                3,
+                'the cap must be read back from storage, not defaulted'
+            );
+
+            const [schedule] = second.getCronSchedules({ name: 'spawn_persist' });
+            assert.equal(schedule.max_instances, 3, 'the schedule view must report the effective cap');
+        } finally {
+            second.db.close();
+        }
+    });
+
+    it('should not rewrite a cancelled schedule when a late run fails', () => {
+        // A run can finish after its schedule was cancelled. Writing the failure back
+        // would falsify the record and refresh `last_active_time`, postponing the
+        // retention of a row that is meant to age out.
+        taskManager.use('spawn_late_fail', (task) => {
+            if (task.payload && task.payload.slowFail) {
+                coroutine.sleep(1500);
+                throw new Error('late boom');
+            }
+            return 'ok';
+        });
+        taskManager.db.setup();
+
+        const scheduleId = taskManager.cron('spawn_late_fail', '0 0 1 1 *', {});
+        taskManager.runCronNow(scheduleId, { slowFail: true }, { ignoreMaxInstances: true });
+
+        // The run must have started before the schedule is cancelled, otherwise it
+        // would simply be cancelled while still pending.
+        taskManager.start();
+        try {
+            assert.ok(
+                waitFor(() => {
+                    const runs = taskManager.getTasks({ name: 'spawn_late_fail', type: 'async' });
+                    return runs.some(run => run.status === 'running');
+                }, 8000),
+                'expected the run to start'
+            );
+
+            taskManager.cancelCron({ name: 'spawn_late_fail' });
+            const before = taskManager.getTask(scheduleId);
+            assert.equal(before.status, 'cancelled');
+
+            assert.ok(
+                waitFor(() => {
+                    const runs = taskManager.getTasks({ name: 'spawn_late_fail', type: 'async' });
+                    return runs.some(run => run.status === 'failed');
+                }, 12000),
+                'expected the late run to fail'
+            );
+
+            const after = taskManager.getTask(scheduleId);
+            assert.equal(after.error, before.error, 'a cancelled schedule must keep its recorded reason');
+            assert.equal(
+                after.last_active_time,
+                before.last_active_time,
+                'a cancelled schedule must not have its retention clock refreshed'
+            );
         } finally {
             taskManager.stop();
         }

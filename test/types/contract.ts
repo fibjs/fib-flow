@@ -145,6 +145,9 @@ const spawnedId: number | string = spawned.taskId;
 const spawnedNextRun: number | null = spawned.next_run_time;
 void spawnedId; void spawnedNextRun;
 
+const forcedSpawn = taskManager.runCronNow(cronId, {}, { ignoreMaxInstances: true });
+void forcedSpawn;
+
 // @ts-expect-error — trigger must be a string
 const bogusTrigger = taskManager.runCronNow(cronId, {}, { trigger: 1 });
 
