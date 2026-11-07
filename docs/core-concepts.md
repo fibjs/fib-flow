@@ -242,6 +242,12 @@ Properties that hold in `spawn` mode:
   yourself under the same handler name neither blocks the schedule nor writes to
   its `last_error`. Two schedules that share `name` + `tag` and differ only by
   `cron_key` are likewise counted separately.
+  `runCronNow()` counts toward the same cap — a manual trigger is a run of this
+  schedule — and throws when the cap is reached instead of silently skipping. Pass
+  `{ ignoreMaxInstances: true }` to force one anyway.
+  The cap is persisted (in `fib_flow_meta`, so no schema change), which means it
+  survives a restart even on a tick that runs before the caller re-registers the
+  schedule. `getCronSchedules()[].max_instances` reports the effective value.
 - **A failing round leaves its reason on the schedule row.** The failure itself
   lands on the run row (`status: 'failed'`), but the reason is mirrored onto the
   schedule's `error`, so `getCronSchedules()[].last_error` does not stay empty

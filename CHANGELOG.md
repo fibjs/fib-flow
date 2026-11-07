@@ -92,6 +92,27 @@ upgrading changes no behaviour until `cronMode` is set explicitly.
   same unbounded shape the earlier spawn-event cap fixed, just under another event
   name. `task_cron_run_failed` / `task_cron_run_recovered` are now both deduplicated
   and part of the capped round-event family.
+
+### Consistency fixes on top of the above
+
+- **`runCronNow()` obeys `maxInstances`.** A manual trigger produces a run of the
+  schedule, so it counted toward the cap while being exempt from it: three triggers
+  created three runs at `maxInstances: 1`, and the scheduled rounds were then
+  skipped for as long as those runs lived. It now throws when the cap is reached
+  (`{ ignoreMaxInstances: true }` forces one), so the limit means one thing.
+- **`maxInstances` is persisted.** It used to live in memory only, so a tick that
+  ran before the caller re-registered the schedule silently reverted to `1`. It is
+  now stored per schedule in `fib_flow_meta` (key-value, so no schema change) and
+  also reported as `getCronSchedules()[].max_instances`.
+- **A cancelled or paused schedule is never rewritten.** A run finishing after its
+  schedule was cancelled used to write its failure onto that row and refresh
+  `last_active_time`, falsifying the record and postponing retention. Outcome
+  reporting now applies to `pending` / `running` schedules only.
+- **The in-flight count no longer scans the global queue.** It read every
+  `pending` / `running` row of every handler on every tick, for every schedule
+  (25ms at 20k queued rows, growing linearly). It now reads the schedule's own
+  spawn events, which is O(1) in the queue length; the exact form is used only as
+  a fallback when the capped event trail may have been truncated.
 - **The round payload is the schedule payload, verbatim.** fib-flow does not
   flatten or validate it.
 - **Spawn failures do not stall the schedule.** `next_run_time` advances, the
@@ -117,7 +138,7 @@ upgrading changes no behaviour until `cronMode` is set explicitly.
 
 ### Test suite
 
-- Verified against SQLite, PostgreSQL 16 and MySQL 8.0 (233 passing, 1 skipped on
+- Verified against SQLite, PostgreSQL 16 and MySQL 8.0 (236 passing, 1 skipped on
   each; `FIB_FLOW_TEST_DB` selects the backend).
 - Two pre-existing tests were made deterministic. Both timed on wall-clock
   seconds and failed intermittently on the network backends:
@@ -130,7 +151,7 @@ upgrading changes no behaviour until `cronMode` is set explicitly.
     reach `pending` only. A cron row also passes through `pending` between
     "children completed" and "the round's final execution", where `result` still
     holds the child entries. It now waits for the round result.
-- The spawn suite runs in `test/cron_spawn_test.js` (34 cases).
+- The spawn suite runs in `test/cron_spawn_test.js` (37 cases).
 
 ## 8.0.1
 
