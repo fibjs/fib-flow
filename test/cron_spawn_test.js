@@ -1312,6 +1312,44 @@ describe('Cron spawn mode', () => {
         }
     });
 
+    it('should leave no trace when a registration is rejected', () => {
+        // A rejected `cron()` must not have written anything. Persisting the
+        // `maxInstances` policy before validating the expression left an orphan
+        // policy row behind, and an orphan row makes `_hasRetentionWork()` true —
+        // so the following ticks ran a full retention pass for nothing until the
+        // sweep collected it.
+        taskManager.use('spawn_reject_trace', () => 'ok');
+        taskManager.db.setup();
+
+        const metaCount = () => taskManager.db.pool(conn => conn.execute(
+            `SELECT COUNT(*) AS total FROM fib_flow_meta WHERE meta_key LIKE ?`,
+            '%spawn_reject_trace%'
+        ))[0].total;
+        const cronRowCount = () => taskManager.db.pool(conn => conn.execute(
+            `SELECT COUNT(*) AS total FROM fib_flow_tasks WHERE type = 'cron' AND name = ?`,
+            'spawn_reject_trace'
+        ))[0].total;
+
+        const rejections = [
+            ['invalid expression', () => taskManager.cron('spawn_reject_trace', 'not a cron', {})],
+            ['negative maxInstances', () => taskManager.cron('spawn_reject_trace', '0 0 1 1 *', {}, { maxInstances: -1 })],
+            ['blank cronKey', () => taskManager.cron('spawn_reject_trace', '0 0 1 1 *', {}, { cronKey: '   ' })],
+            ['invalid timezone', () => taskManager.cron('spawn_reject_trace', '0 0 1 1 *', {}, { timezone: 'Mars/Olympus' })],
+            ['bad catchUp', () => taskManager.cron('spawn_reject_trace', '0 0 1 1 *', {}, { catchUp: 'always' })]
+        ];
+
+        for (const [label, attempt] of rejections) {
+            assert.throws(attempt, `the ${label} case must be rejected`);
+            assert.equal(metaCount(), 0, `the ${label} case must not persist a policy row`);
+            assert.equal(cronRowCount(), 0, `the ${label} case must not create a schedule row`);
+        }
+
+        // And a valid registration still works.
+        taskManager.cron('spawn_reject_trace', '0 0 1 1 *', {}, { maxInstances: 2 });
+        assert.equal(metaCount(), 1);
+        assert.equal(cronRowCount(), 1);
+    });
+
     it('should not regress the inline path', () => {
         // Same handler, same expression, default mode: the schedule row runs it and
         // no async row appears. This pins "8.1.0 is additive".

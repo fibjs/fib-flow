@@ -159,6 +159,11 @@ Both are reachable only with `cronMode: 'spawn'`.
   made the schedule report a previous execution while the run rows reported the
   current one. Both modes now agree that `result` on a spawn-mode schedule is
   `NULL` (read the run rows).
+- **A rejected `cron()` leaves no trace.** The `maxInstances` policy was persisted
+  before the cron expression was validated, so an invalid expression left an
+  orphan `schedule:*` row behind. That row in turn made `_hasRetentionWork()`
+  report work, so the following ticks ran a full retention pass for nothing until
+  the sweep collected it. All validation now happens before anything is written.
 - **The round payload is the schedule payload, verbatim.** fib-flow does not
   flatten or validate it.
 - **Spawn failures do not stall the schedule.** `next_run_time` advances, the
@@ -184,7 +189,7 @@ Both are reachable only with `cronMode: 'spawn'`.
 
 ### Test suite
 
-- Verified against SQLite, PostgreSQL 16 and MySQL 8.0 (241 passing, 1 skipped on
+- Verified against SQLite, PostgreSQL 16 and MySQL 8.0 (242 passing, 1 skipped on
   each; `FIB_FLOW_TEST_DB` selects the backend).
 - Two pre-existing tests were made deterministic. Both timed on wall-clock
   seconds and failed intermittently on the network backends:
