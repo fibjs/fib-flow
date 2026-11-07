@@ -271,6 +271,10 @@ Properties that hold in `spawn` mode:
   claim — such a row would never reach a terminal state and never become a
   retention candidate. The schedule row stays `pending` (not cancelled) and
   resumes as soon as a handler is registered again.
+- **The schedule row's `result` is always `NULL`.** Spawn never writes it; the
+  round outcome lives on the run row. A schedule that was previously in `inline`
+  mode has its stale `result` dropped on the first spawn, so the two modes never
+  disagree about what the schedule reports.
 - **The payload is copied verbatim.** fib-flow does not reshape it; whatever shape
   your handler expects must already be stored on the schedule row.
 

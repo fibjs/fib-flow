@@ -147,6 +147,18 @@ Both are reachable only with `cronMode: 'spawn'`.
   update when the insert loses the race, and is deliberately NOT wrapped in a
   transaction — on PostgreSQL a failed statement aborts the surrounding
   transaction, so a recovery statement inside it would fail too.
+- **The metadata sweep also runs when the global retention window is disabled.**
+  The sweep gate treated `retention: { expire_time: null }` with no row-level
+  windows as "nothing to do", so the metadata never got collected — the same
+  configuration the 8.0.1 gate fix was about, with the old symptom under a new
+  name. Outstanding `schedule:*` rows now count as sweep work, and
+  `handleTimeoutTasks` no longer re-gates on `expire_time` after the caller has
+  already armed the pass.
+- **Switching `inline` → `spawn` drops the stale `result`.** Spawn never writes
+  `result` on the schedule, so a value there is always an inline-era leftover; it
+  made the schedule report a previous execution while the run rows reported the
+  current one. Both modes now agree that `result` on a spawn-mode schedule is
+  `NULL` (read the run rows).
 - **The round payload is the schedule payload, verbatim.** fib-flow does not
   flatten or validate it.
 - **Spawn failures do not stall the schedule.** `next_run_time` advances, the
@@ -172,7 +184,7 @@ Both are reachable only with `cronMode: 'spawn'`.
 
 ### Test suite
 
-- Verified against SQLite, PostgreSQL 16 and MySQL 8.0 (239 passing, 1 skipped on
+- Verified against SQLite, PostgreSQL 16 and MySQL 8.0 (241 passing, 1 skipped on
   each; `FIB_FLOW_TEST_DB` selects the backend).
 - Two pre-existing tests were made deterministic. Both timed on wall-clock
   seconds and failed intermittently on the network backends:
@@ -185,7 +197,7 @@ Both are reachable only with `cronMode: 'spawn'`.
     reach `pending` only. A cron row also passes through `pending` between
     "children completed" and "the round's final execution", where `result` still
     holds the child entries. It now waits for the round result.
-- The spawn suite runs in `test/cron_spawn_test.js` (41 cases).
+- The spawn suite runs in `test/cron_spawn_test.js` (43 cases).
 
 ## 8.0.1
 

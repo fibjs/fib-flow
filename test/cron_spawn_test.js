@@ -1221,6 +1221,97 @@ describe('Cron spawn mode', () => {
         assert.equal(hasMeta(), false, 'the automatic sweep must prune metadata for a removed schedule');
     });
 
+    it('should sweep schedule meta even with the global retention window disabled', () => {
+        // `retention: { expire_time: null }` is a supported configuration (row-level
+        // windows only). The sweep gate used to consider that configuration "no work
+        // to do" unless some row carried its own window — which left the metadata
+        // growing, reintroducing the very problem the sweep was added to solve.
+        const manager = createManager({
+            retention: { expire_time: null }
+        });
+        manager.db.setup();
+        manager.db.clearTasks();
+        manager.use('spawn_gate_gc', () => 'ok');
+
+        const hasMeta = () => manager.db.pool(conn => conn.execute(
+            `SELECT COUNT(*) AS total FROM fib_flow_meta WHERE meta_key LIKE ?`,
+            '%spawn_gate_gc%'
+        ))[0].total > 0;
+
+        manager.cron('spawn_gate_gc', '0 0 1 1 *', {}, { maxInstances: 2 });
+        assert.ok(hasMeta());
+
+        manager.db.pool(conn => conn.execute(
+            `DELETE FROM fib_flow_tasks WHERE type = 'cron' AND name = 'spawn_gate_gc'`
+        ));
+
+        try {
+            assert.equal(
+                manager._hasRetentionWork(),
+                true,
+                'outstanding schedule metadata counts as sweep work'
+            );
+
+            manager.nextRetentionSweepAt = 0;
+            const policy = manager._consumeAutoRetentionPolicy(Date.now());
+            assert.ok(policy, 'the sweep must be armed with the global window disabled');
+
+            manager.db.handleTimeoutTasks({
+                task_heartbeat_interval: 1000,
+                task_heartbeat_timeout: 30000
+            }, policy);
+
+            assert.equal(hasMeta(), false, 'the pass must prune metadata without a global window');
+        } finally {
+            manager.stop();
+        }
+    });
+
+    it('should drop an inline-era result when a schedule switches to spawn', () => {
+        // Spawn never writes `result` on the schedule. A value is therefore always a
+        // leftover from the round that ran the handler in place, and leaving it makes
+        // the schedule report a previous execution while the run rows report the
+        // current ones.
+        const conn = 'sqlite:/tmp/fibflow_switch_modes.sqlite';
+        const inline = new TaskManager({ dbConnection: conn, poll_interval: 100 });
+        inline.db.setup();
+        inline.db.clearTasks();
+        inline.use('spawn_switch_job', () => 'INLINE_RESULT');
+        const scheduleId = inline.cron('spawn_switch_job', '* * * * * *', {});
+
+        inline.start();
+        try {
+            assert.ok(
+                waitFor(() => inline.getTask(scheduleId).result === 'INLINE_RESULT', 12000),
+                'the inline round must write its result on the schedule'
+            );
+        } finally {
+            inline.stop();
+        }
+
+        const spawn = new TaskManager({ dbConnection: conn, poll_interval: 100, cronMode: 'spawn' });
+        spawn.use('spawn_switch_job', () => 'SPAWN_RESULT');
+        spawn.start();
+        try {
+            assert.ok(
+                waitFor(() => spawn.getTasks({ name: 'spawn_switch_job', type: 'async' }).length >= 1, 12000),
+                'expected a spawned run'
+            );
+
+            const schedule = spawn.getTask(scheduleId);
+            assert.equal(
+                schedule.result,
+                null,
+                'the inline-era result must not linger on a spawn-mode schedule'
+            );
+
+            const [run] = spawn.getTasks({ name: 'spawn_switch_job', type: 'async' });
+            assert.equal(run.result, 'SPAWN_RESULT', 'the run row carries the result');
+        } finally {
+            spawn.stop();
+        }
+    });
+
     it('should not regress the inline path', () => {
         // Same handler, same expression, default mode: the schedule row runs it and
         // no async row appears. This pins "8.1.0 is additive".
