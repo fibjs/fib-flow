@@ -1294,8 +1294,11 @@ describe('Cron spawn mode', () => {
         spawn.start();
         try {
             assert.ok(
-                waitFor(() => spawn.getTasks({ name: 'spawn_switch_job', type: 'async' }).length >= 1, 12000),
-                'expected a spawned run'
+                waitFor(() => {
+                    const runs = spawn.getTasks({ name: 'spawn_switch_job', type: 'async' });
+                    return runs.some(run => run.result === 'SPAWN_RESULT');
+                }, 12000),
+                'expected a completed spawned run carrying the result'
             );
 
             const schedule = spawn.getTask(scheduleId);
@@ -1305,8 +1308,15 @@ describe('Cron spawn mode', () => {
                 'the inline-era result must not linger on a spawn-mode schedule'
             );
 
-            const [run] = spawn.getTasks({ name: 'spawn_switch_job', type: 'async' });
-            assert.equal(run.result, 'SPAWN_RESULT', 'the run row carries the result');
+            // `getTasks` orders ascending, so the first row may still be queued or
+            // may already be gone by the time this runs; assert on any run that
+            // finished rather than on a particular one.
+            const completed = spawn.getTasks({ name: 'spawn_switch_job', type: 'async' })
+                .filter(run => run.status === 'completed');
+            assert.ok(completed.length > 0, 'at least one run must have completed');
+            for (const run of completed) {
+                assert.equal(run.result, 'SPAWN_RESULT', 'every completed run carries the result');
+            }
         } finally {
             spawn.stop();
         }
@@ -1348,6 +1358,59 @@ describe('Cron spawn mode', () => {
         taskManager.cron('spawn_reject_trace', '0 0 1 1 *', {}, { maxInstances: 2 });
         assert.equal(metaCount(), 1);
         assert.equal(cronRowCount(), 1);
+    });
+
+    it('should apply camelCase option spellings and keep snake_case authoritative', () => {
+        // A silently ignored key is the worst outcome: the manager runs with the
+        // default while the configuration looks applied, and the symptom ("the
+        // schedule is late") reads like an engine bug rather than a typo.
+        //
+        // Constructed directly rather than through `createManager`, which already
+        // supplies `poll_interval` — and with both spellings present the documented
+        // one is meant to win.
+        const aliased = new TaskManager({ dbConnection: config.dbConnection, pollInterval: 25 });
+        try {
+            assert.equal(aliased.options.poll_interval, 25, 'pollInterval must reach poll_interval');
+        } finally {
+            aliased.db.close();
+        }
+
+        const both = new TaskManager({
+            dbConnection: config.dbConnection,
+            poll_interval: 40,
+            pollInterval: 999
+        });
+        try {
+            assert.equal(
+                both.options.poll_interval,
+                40,
+                'the documented spelling must win when both are supplied'
+            );
+        } finally {
+            both.db.close();
+        }
+
+        const multi = new TaskManager({
+            dbConnection: config.dbConnection,
+            pollInterval: 30,
+            maxRetries: 5,
+            maxConcurrentTasks: 3
+        });
+        try {
+            assert.equal(multi.options.poll_interval, 30);
+            assert.equal(multi.options.max_retries, 5);
+            assert.equal(multi.options.max_concurrent_tasks, 3);
+        } finally {
+            multi.db.close();
+        }
+
+        // `cronMode` is already the documented name and must pass through as-is.
+        const spawnMode = createManager();
+        try {
+            assert.equal(spawnMode.options.cronMode, 'spawn');
+        } finally {
+            spawnMode.db.close();
+        }
     });
 
     it('should not regress the inline path', () => {

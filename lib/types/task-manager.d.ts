@@ -66,7 +66,14 @@ export type DbConnectionInput = string | object | ((callback: (conn: unknown) =>
 
 export type DatabaseType = 'sqlite' | 'mysql' | 'psql';
 
-/** TaskManager configuration. `dbConnection` is the only required field. */
+/**
+ * TaskManager configuration. `dbConnection` is the only required field.
+ *
+ * Option names are **snake_case**; `cronMode` is the one exception. A camelCase
+ * spelling of a known option (`pollInterval`, `maxRetries`, …) is mapped onto the
+ * snake_case name at runtime and logged as a warning — it is not part of the typed
+ * surface, so TypeScript callers get an error instead.
+ */
 export interface TaskManagerOptions {
     dbConnection: DbConnectionInput;
     /** Explicit backend selection; inferred from the connection string when omitted. */

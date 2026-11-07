@@ -164,6 +164,12 @@ Both are reachable only with `cronMode: 'spawn'`.
   orphan `schedule:*` row behind. That row in turn made `_hasRetentionWork()`
   report work, so the following ticks ran a full retention pass for nothing until
   the sweep collected it. All validation now happens before anything is written.
+- **camelCase option spellings are applied and logged.** `new TaskManager({ pollInterval: 20 })`
+  used to be accepted silently and then ignored — the key stayed in `options`
+  unread while `poll_interval` kept its default, so the setting looked applied. A
+  snake_case key always wins when both are present, and the warning names the
+  rename. The documented surface stays snake_case (TypeScript still rejects the
+  camelCase form).
 - **The round payload is the schedule payload, verbatim.** fib-flow does not
   flatten or validate it.
 - **Spawn failures do not stall the schedule.** `next_run_time` advances, the
@@ -189,7 +195,7 @@ Both are reachable only with `cronMode: 'spawn'`.
 
 ### Test suite
 
-- Verified against SQLite, PostgreSQL 16 and MySQL 8.0 (242 passing, 1 skipped on
+- Verified against SQLite, PostgreSQL 16 and MySQL 8.0 (243 passing, 1 skipped on
   each; `FIB_FLOW_TEST_DB` selects the backend).
 - Two pre-existing tests were made deterministic. Both timed on wall-clock
   seconds and failed intermittently on the network backends:
@@ -202,7 +208,7 @@ Both are reachable only with `cronMode: 'spawn'`.
     reach `pending` only. A cron row also passes through `pending` between
     "children completed" and "the round's final execution", where `result` still
     holds the child entries. It now waits for the round result.
-- The spawn suite runs in `test/cron_spawn_test.js` (43 cases).
+- The spawn suite runs in `test/cron_spawn_test.js` (44 cases).
 
 ## 8.0.1
 
