@@ -69,10 +69,9 @@ export type DatabaseType = 'sqlite' | 'mysql' | 'psql';
 /**
  * TaskManager configuration. `dbConnection` is the only required field.
  *
- * Option names are **snake_case**; `cronMode` is the one exception. A camelCase
- * spelling of a known option (`pollInterval`, `maxRetries`, …) is mapped onto the
- * snake_case name at runtime and logged as a warning — it is not part of the typed
- * surface, so TypeScript callers get an error instead.
+ * Option names are **snake_case**; `cronMode` is the one exception. There is no
+ * spelling normalisation: an unrecognised key is simply not read, which TypeScript
+ * reports as an error below.
  */
 export interface TaskManagerOptions {
     dbConnection: DbConnectionInput;
@@ -135,10 +134,8 @@ export interface TaskOptions {
  *
  * Note the mixed conventions: `cronKey`, `timezone`, `catchUp`, `maxInstances`
  * are camelCase while `max_retries`, `retry_interval`, `retention_expire_time`
- * are snake_case. At runtime the other spelling of each is accepted (with a
- * warning) — `cron_key` matters most, because an ignored key falls back to
- * `'default'` and registers the schedule twice. This typed surface, like the
- * documented one, accepts only the names below.
+ * are snake_case. Each name is accepted exactly as written here — there is no
+ * alternative spelling.
  */
 export interface CronOptions extends Omit<TaskOptions, 'delay'> {
     /** Schedule identity; `(name, cronKey)` is unique. Default `'default'`. */
@@ -516,12 +513,6 @@ export declare class DatabaseAdapter {
      * Pass `error: null` on success to clear a previous failure.
      */
     recordScheduleRunOutcome(params: CronRunOutcomeInput): number;
-    /** Persist the per-schedule `maxInstances` policy (stored in `fib_flow_meta`). */
-    setScheduleMaxInstances(scheduleName: string, cronKey: string, maxInstances: number | null): void;
-    /** Read a persisted `maxInstances` policy; `undefined` when none is stored. */
-    getScheduleMaxInstances(scheduleName: string, cronKey: string): number | null | undefined;
-    /** Delete per-schedule `fib_flow_meta` rows whose schedule row no longer exists. */
-    pruneScheduleMeta(): number;
     updateTaskStatus(taskId: TaskIdentifier, status: TaskStatus, extra?: TaskStatusUpdate): void;
     recordCronWindowSkipped(taskId: TaskIdentifier, details: CronSkipDetails): boolean;
     recordTaskProgress(taskId: TaskIdentifier, progress: TaskProgressSnapshot, workerId?: string | null): number;
