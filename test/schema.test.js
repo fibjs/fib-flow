@@ -28,7 +28,7 @@ describe('Schema contract', () => {
         ));
 
         assert.equal(rows.length, 1);
-        assert.equal(String(rows[0].meta_value), '2');
+        assert.equal(String(rows[0].meta_value), '3');
     });
 
     it('should be idempotent across repeated setup() calls', () => {
@@ -63,11 +63,11 @@ describe('Schema contract', () => {
 
         assert.throws(() => {
             taskManager.db.setup();
-        }, /is not supported; expected v2/);
+        }, /is not supported; expected v3/);
 
         // Restore so the shared database used by other suites stays usable.
         taskManager.db.pool(conn => conn.execute(
-            "UPDATE fib_flow_meta SET meta_value = '2' WHERE meta_key = 'schema_version'"
+            "UPDATE fib_flow_meta SET meta_value = '3' WHERE meta_key = 'schema_version'"
         ));
     });
 

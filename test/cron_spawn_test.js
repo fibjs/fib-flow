@@ -1,9 +1,28 @@
 const { describe, it, beforeEach, afterEach } = require('test');
 const assert = require('assert');
 const coroutine = require('coroutine');
+const fs = require('fs');
 
 const { TaskManager } = require('..');
 const config = require('./config.js');
+
+/**
+ * Delete a file-backed SQLite database given as a connection string.
+ *
+ * These tests need a real file so a second manager can reopen it, which means
+ * they must clean up after themselves — including the WAL sidecars, which hold
+ * the committed pages until the last connection closes.
+ *
+ * @param {string} connection - e.g. `sqlite:/tmp/foo.sqlite`
+ */
+function removeSqliteFile(connection) {
+    const dbPath = connection.replace(/^sqlite:/, '');
+    for (const file of [dbPath, `${dbPath}-wal`, `${dbPath}-shm`]) {
+        if (fs.exists(file)) {
+            fs.unlink(file);
+        }
+    }
+}
 
 function waitFor(predicate, timeoutMs = 8000, intervalMs = 50) {
     const deadline = Date.now() + timeoutMs;
@@ -1054,6 +1073,7 @@ describe('Cron spawn mode', () => {
         // The cap used to live in memory only, so any tick that ran before the caller
         // re-registered the schedule silently reverted to 1.
         const conn = 'sqlite:/tmp/fibflow_maxinst_persist.sqlite';
+        removeSqliteFile(conn);
         const first = new TaskManager({ dbConnection: conn, poll_interval: 100, cronMode: 'spawn' });
         first.db.setup();
         first.db.clearTasks();
@@ -1075,6 +1095,7 @@ describe('Cron spawn mode', () => {
             assert.equal(schedule.max_instances, 3, 'the schedule view must report the effective cap');
         } finally {
             second.db.close();
+            removeSqliteFile(conn);
         }
     });
 
@@ -1153,117 +1174,88 @@ describe('Cron spawn mode', () => {
         assert.equal(third.max_instances, 1, 'an explicit null resets to the default');
     });
 
-    it('should sweep stored maxInstances for schedules that no longer exist', () => {
-        taskManager.use('spawn_meta_gc_a', () => 'ok');
-        taskManager.use('spawn_meta_gc_b', () => 'ok');
+    it('should store maxInstances for realistic schedule names', () => {
+        // The cap used to be keyed as `schedule:<name>:<cronKey>` inside the
+        // `fib_flow_meta` key-value table. With `VARCHAR(64)` on PostgreSQL and
+        // MySQL, a 30-character name plus the JSON payload ran past the limit, so
+        // the *primary key* was violated — and the failure surfaced as a
+        // "concurrency conflict" on an insert that had nothing to do with another
+        // writer. Moving the cap onto the schedule row removes the encoding
+        // entirely, so name length cannot matter.
+        const longName = 'taskdef:mw97ttti_qkjqpt_boci21';   // 30 characters
+        assert.equal(longName.length, 30);
+
+        taskManager.use(longName, () => 'ok');
         taskManager.db.setup();
 
-        // Scope the assertions to this test's two schedules: a shared database may
-        // hold policy rows from other runs, and the sweep legitimately removes
-        // those too.
-        const hasMeta = (name) => taskManager.db.pool(conn => conn.execute(
-            `SELECT COUNT(*) AS total FROM fib_flow_meta WHERE meta_key LIKE ?`,
-            `%${name}%`
-        ))[0].total > 0;
+        const scheduleId = taskManager.cron(longName, '0 0 1 1 *', {}, { maxInstances: 5 });
+        const [schedule] = taskManager.getCronSchedules({ name: longName });
 
-        taskManager.cron('spawn_meta_gc_a', '0 0 1 1 *', {}, { maxInstances: 2 });
-        taskManager.cron('spawn_meta_gc_b', '0 0 1 1 *', {}, { maxInstances: 3 });
-        assert.ok(hasMeta('spawn_meta_gc_a'));
-        assert.ok(hasMeta('spawn_meta_gc_b'));
+        assert.equal(schedule.id, scheduleId);
+        assert.equal(schedule.max_instances, 5, 'the cap must persist regardless of the name length');
 
-        // Remove one schedule's row outright, as a deletion would.
-        taskManager.db.pool(conn => conn.execute(
-            `DELETE FROM fib_flow_tasks WHERE type = 'cron' AND name = 'spawn_meta_gc_a'`
-        ));
-
-        const pruned = taskManager.db.pruneScheduleMeta();
-        assert.ok(pruned >= 1, 'the orphaned policy row must be removed');
-        assert.equal(hasMeta('spawn_meta_gc_a'), false, 'the removed schedule loses its policy');
-        assert.equal(hasMeta('spawn_meta_gc_b'), true, 'the live schedule keeps its policy');
-
-        const [live] = taskManager.getCronSchedules({ name: 'spawn_meta_gc_b' });
-        assert.equal(live.max_instances, 3);
+        // And a restart sees it too.
+        const row = taskManager.db.getTask(scheduleId);
+        assert.equal(taskManager._getScheduleMaxInstances(row), 5);
     });
 
-    it('should sweep schedule meta on the automatic retention path', () => {
-        // `runRetention()` is optional for an application that relies on the default
-        // retention window: most deployments never call it, and the sweep runs from
-        // the active timer via `handleTimeoutTasks`. Wiring the meta sweep only into
-        // the public entry point would leave it dead in production.
-        taskManager.use('spawn_auto_gc', () => 'ok');
+    it('should round-trip maxInstances through the schedule row across a restart', () => {
+        // A fresh process must read the cap from the row before the caller has had
+        // a chance to re-register. The read path used to consult an in-memory map
+        // and fall back to the default, so a restart silently dropped the cap until
+        // the next `cron()` call.
+        const conn = 'sqlite:/tmp/fibflow_cap_roundtrip.sqlite';
+        removeSqliteFile(conn);
+        const first = new TaskManager({ dbConnection: conn, poll_interval: 100, cronMode: 'spawn' });
+        first.db.setup();
+        first.db.clearTasks();
+        first.use('spawn_cap_rt', () => 'ok');
+        first.cron('spawn_cap_rt', '0 0 1 1 *', {}, { maxInstances: 0 });   // unlimited
+        first.db.close();
+
+        const second = new TaskManager({ dbConnection: conn, poll_interval: 100, cronMode: 'spawn' });
+        try {
+            const [schedule] = second.getCronSchedules({ name: 'spawn_cap_rt' });
+            assert.equal(schedule.max_instances, 0, '0 must survive as "unlimited"');
+            assert.equal(
+                second._getScheduleMaxInstances(schedule),
+                null,
+                'unlimited is represented as null by the manager'
+            );
+        } finally {
+            second.db.close();
+            removeSqliteFile(conn);
+        }
+    });
+
+    it('should accept a meta key longer than 64 characters', () => {
+        // `fib_flow_meta` is a key-value store for engine-level values, and
+        // `VARCHAR(64)` was an arbitrary ceiling that a caller can reach. The column
+        // is now sized so any key the application needs fits: 1024 on PostgreSQL and
+        // 768 on MySQL (768 × 4 bytes = the InnoDB index limit at utf8mb4).
         taskManager.db.setup();
 
-        const hasMeta = () => taskManager.db.pool(conn => conn.execute(
-            `SELECT COUNT(*) AS total FROM fib_flow_meta WHERE meta_key LIKE ?`,
-            '%spawn_auto_gc%'
-        ))[0].total > 0;
-
-        taskManager.cron('spawn_auto_gc', '0 0 1 1 *', {}, { maxInstances: 2 });
-        assert.ok(hasMeta(), 'registration must persist the policy');
+        const longKey = 'probe:' + 'k'.repeat(200);
+        assert.ok(longKey.length > 64);
 
         taskManager.db.pool(conn => conn.execute(
-            `DELETE FROM fib_flow_tasks WHERE type = 'cron' AND name = 'spawn_auto_gc'`
-        ));
-
-        // Walk the automatic path: consume the policy, then hand it to the sweep that
-        // the active timer calls. The throttle is bypassed the same way a real tick
-        // does once it expires.
-        taskManager.options.retention = { expire_time: 1, statuses: ['completed', 'permanently_failed', 'cancelled'] };
-        taskManager.nextRetentionSweepAt = 0;
-        const policy = taskManager._consumeAutoRetentionPolicy(Date.now());
-        assert.ok(policy, 'the sweep must be armed');
-
-        taskManager.db.handleTimeoutTasks({
-            task_heartbeat_interval: 1000,
-            task_heartbeat_timeout: 30000
-        }, policy);
-
-        assert.equal(hasMeta(), false, 'the automatic sweep must prune metadata for a removed schedule');
-    });
-
-    it('should sweep schedule meta even with the global retention window disabled', () => {
-        // `retention: { expire_time: null }` is a supported configuration (row-level
-        // windows only). The sweep gate used to consider that configuration "no work
-        // to do" unless some row carried its own window — which left the metadata
-        // growing, reintroducing the very problem the sweep was added to solve.
-        const manager = createManager({
-            retention: { expire_time: null }
-        });
-        manager.db.setup();
-        manager.db.clearTasks();
-        manager.use('spawn_gate_gc', () => 'ok');
-
-        const hasMeta = () => manager.db.pool(conn => conn.execute(
-            `SELECT COUNT(*) AS total FROM fib_flow_meta WHERE meta_key LIKE ?`,
-            '%spawn_gate_gc%'
-        ))[0].total > 0;
-
-        manager.cron('spawn_gate_gc', '0 0 1 1 *', {}, { maxInstances: 2 });
-        assert.ok(hasMeta());
-
-        manager.db.pool(conn => conn.execute(
-            `DELETE FROM fib_flow_tasks WHERE type = 'cron' AND name = 'spawn_gate_gc'`
+            `INSERT INTO fib_flow_meta (meta_key, meta_value) VALUES (?, ?)`,
+            longKey,
+            'ok'
         ));
 
         try {
-            assert.equal(
-                manager._hasRetentionWork(),
-                true,
-                'outstanding schedule metadata counts as sweep work'
-            );
-
-            manager.nextRetentionSweepAt = 0;
-            const policy = manager._consumeAutoRetentionPolicy(Date.now());
-            assert.ok(policy, 'the sweep must be armed with the global window disabled');
-
-            manager.db.handleTimeoutTasks({
-                task_heartbeat_interval: 1000,
-                task_heartbeat_timeout: 30000
-            }, policy);
-
-            assert.equal(hasMeta(), false, 'the pass must prune metadata without a global window');
+            const rows = taskManager.db.pool(conn => conn.execute(
+                `SELECT meta_value FROM fib_flow_meta WHERE meta_key = ?`,
+                longKey
+            ));
+            assert.equal(rows.length, 1);
+            assert.equal(String(rows[0].meta_value), 'ok');
         } finally {
-            manager.stop();
+            taskManager.db.pool(conn => conn.execute(
+                `DELETE FROM fib_flow_meta WHERE meta_key = ?`,
+                longKey
+            ));
         }
     });
 
@@ -1273,6 +1265,7 @@ describe('Cron spawn mode', () => {
         // the schedule report a previous execution while the run rows report the
         // current ones.
         const conn = 'sqlite:/tmp/fibflow_switch_modes.sqlite';
+        removeSqliteFile(conn);
         const inline = new TaskManager({ dbConnection: conn, poll_interval: 100 });
         inline.db.setup();
         inline.db.clearTasks();
@@ -1319,22 +1312,16 @@ describe('Cron spawn mode', () => {
             }
         } finally {
             spawn.stop();
+            removeSqliteFile(conn);
         }
     });
 
     it('should leave no trace when a registration is rejected', () => {
-        // A rejected `cron()` must not have written anything. Persisting the
-        // `maxInstances` policy before validating the expression left an orphan
-        // policy row behind, and an orphan row makes `_hasRetentionWork()` true —
-        // so the following ticks ran a full retention pass for nothing until the
-        // sweep collected it.
+        // A rejected `cron()` must not have written anything. The cap lives on the
+        // schedule row, so "no trace" now means exactly one thing: no schedule row.
         taskManager.use('spawn_reject_trace', () => 'ok');
         taskManager.db.setup();
 
-        const metaCount = () => taskManager.db.pool(conn => conn.execute(
-            `SELECT COUNT(*) AS total FROM fib_flow_meta WHERE meta_key LIKE ?`,
-            '%spawn_reject_trace%'
-        ))[0].total;
         const cronRowCount = () => taskManager.db.pool(conn => conn.execute(
             `SELECT COUNT(*) AS total FROM fib_flow_tasks WHERE type = 'cron' AND name = ?`,
             'spawn_reject_trace'
@@ -1350,126 +1337,44 @@ describe('Cron spawn mode', () => {
 
         for (const [label, attempt] of rejections) {
             assert.throws(attempt, `the ${label} case must be rejected`);
-            assert.equal(metaCount(), 0, `the ${label} case must not persist a policy row`);
             assert.equal(cronRowCount(), 0, `the ${label} case must not create a schedule row`);
         }
 
         // And a valid registration still works.
         taskManager.cron('spawn_reject_trace', '0 0 1 1 *', {}, { maxInstances: 2 });
-        assert.equal(metaCount(), 1);
         assert.equal(cronRowCount(), 1);
     });
 
-    it('should apply camelCase option spellings and keep snake_case authoritative', () => {
-        // A silently ignored key is the worst outcome: the manager runs with the
-        // default while the configuration looks applied, and the symptom ("the
-        // schedule is late") reads like an engine bug rather than a typo.
-        //
-        // Constructed directly rather than through `createManager`, which already
-        // supplies `poll_interval` — and with both spellings present the documented
-        // one is meant to win.
-        const aliased = new TaskManager({ dbConnection: config.dbConnection, pollInterval: 25 });
-        try {
-            assert.equal(aliased.options.poll_interval, 25, 'pollInterval must reach poll_interval');
-        } finally {
-            aliased.db.close();
-        }
-
-        const both = new TaskManager({
-            dbConnection: config.dbConnection,
-            poll_interval: 40,
-            pollInterval: 999
-        });
-        try {
-            assert.equal(
-                both.options.poll_interval,
-                40,
-                'the documented spelling must win when both are supplied'
-            );
-        } finally {
-            both.db.close();
-        }
-
-        const multi = new TaskManager({
-            dbConnection: config.dbConnection,
-            pollInterval: 30,
-            maxRetries: 5,
-            maxConcurrentTasks: 3
-        });
-        try {
-            assert.equal(multi.options.poll_interval, 30);
-            assert.equal(multi.options.max_retries, 5);
-            assert.equal(multi.options.max_concurrent_tasks, 3);
-        } finally {
-            multi.db.close();
-        }
-
-        // `cronMode` is already the documented name and must pass through as-is.
-        const spawnMode = createManager();
-        try {
-            assert.equal(spawnMode.options.cronMode, 'spawn');
-        } finally {
-            spawnMode.db.close();
-        }
-    });
-
-    it('should apply alternate cron() option spellings without splitting the schedule', () => {
-        // `cron_key` is the dangerous one: an ignored key falls back to `'default'`,
-        // so the same schedule is registered under a second identity and fires
-        // twice — a duplicate trigger, not merely an ineffective setting.
-        taskManager.use('spawn_cron_alias', () => 'ok');
+    it('should read cron() options under their documented names only', () => {
+        // There is no spelling normalisation. A misspelled key is not read, which is
+        // the honest outcome: the option is absent, so the default applies. Silently
+        // rewriting `cron_key` into `cronKey` was worse than useless — it made a
+        // typo work locally while the documented name stayed the only one the types
+        // accepted, and the rewrite machinery had to know every option name.
+        taskManager.use('spawn_no_alias', () => 'ok');
         taskManager.db.setup();
 
-        taskManager.cron('spawn_cron_alias', '0 0 1 1 *', {}, { cronKey: 'k1' });
-        taskManager.cron('spawn_cron_alias', '0 0 1 1 *', {}, { cron_key: 'k2' });
+        taskManager.cron('spawn_no_alias', '0 0 1 1 *', {}, { cronKey: 'documented' });
+        taskManager.cron('spawn_no_alias', '0 0 1 1 *', {}, { cron_key: 'misspelled' });
 
         const keys = taskManager.db.pool(conn => conn.execute(
             `SELECT cron_key FROM fib_flow_tasks WHERE type = 'cron' AND name = ? ORDER BY id`,
-            'spawn_cron_alias'
+            'spawn_no_alias'
         )).map(row => row.cron_key);
+
         assert.deepEqual(
             keys,
-            ['k1', 'k2'],
-            'cron_key must be honoured as cronKey, not fall back to "default"'
+            ['documented', 'default'],
+            'cron_key must not be rewritten into cronKey'
         );
 
-        // Every other option, supplied only in its alternate spelling.
-        taskManager.cron('spawn_cron_alias', '0 0 1 1 *', {}, {
-            cron_key: 'alt',
-            max_instances: 4,
-            retention_expire_time: 1234,
-            max_retries: 6,
-            retry_interval: 8,
-            priority: 3,
-            timeout: 99,
-            tag: 'ALT_TAG'
+        // The same holds for execution options: an unknown key changes nothing.
+        const scheduleId = taskManager.cron('spawn_no_alias', '0 0 1 1 *', {}, {
+            cronKey: 'opts',
+            max_instances: 9
         });
-
-        const row = taskManager.db.pool(conn => conn.execute(
-            `SELECT max_retries, retry_interval, priority, timeout, tag, retention_expire_time
-               FROM fib_flow_tasks WHERE type = 'cron' AND name = ? AND cron_key = 'alt'`,
-            'spawn_cron_alias'
-        ))[0];
-        assert.equal(row.max_retries, 6);
-        assert.equal(row.retry_interval, 8);
-        assert.equal(row.priority, 3);
-        assert.equal(row.timeout, 99);
-        assert.equal(row.tag, 'ALT_TAG');
-        assert.equal(row.retention_expire_time, 1234);
-
-        const [schedule] = taskManager.getCronSchedules({ name: 'spawn_cron_alias' })
-            .filter(item => item.cron_key === 'alt');
-        assert.equal(schedule.max_instances, 4, 'max_instances must be honoured as maxInstances');
-
-        // The documented spelling wins when both are present.
-        taskManager.cron('spawn_cron_alias', '0 0 1 1 *', {}, { cronKey: 'doc', cron_key: 'typo' });
-        const docRow = taskManager.db.pool(conn => conn.execute(
-            `SELECT COUNT(*) AS total FROM fib_flow_tasks
-              WHERE type = 'cron' AND name = ? AND cron_key = ?`,
-            'spawn_cron_alias',
-            'doc'
-        ))[0];
-        assert.equal(docRow.total, 1, 'the documented spelling must be authoritative');
+        const row = taskManager.db.getTask(scheduleId);
+        assert.equal(row.max_instances, null, 'max_instances must not reach the maxInstances option');
     });
 
     it('should cancel a batch of non-terminal tasks and skip running ones', () => {

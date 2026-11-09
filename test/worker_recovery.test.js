@@ -7,11 +7,16 @@ const path = require('path');
 const { createAdapter, TaskManager } = require('..');
 const config = require('./config.js');
 
+function sqliteSidecars(dbPath) {
+    // A WAL-mode SQLite database owns two sidecar files. Removing only the main
+    // file leaves them behind, so every run of this suite dropped fresh
+    // `*.sqlite-wal` / `*.sqlite-shm` into the repository.
+    return [`${dbPath}-wal`, `${dbPath}-shm`];
+}
+
 function createSqliteFileConnection(name) {
     const dbPath = path.join(__dirname, `${name}.sqlite`);
-    if (fs.exists(dbPath)) {
-        fs.unlink(dbPath);
-    }
+    cleanupSqliteFile(dbPath);
 
     return {
         dbPath,
@@ -20,8 +25,10 @@ function createSqliteFileConnection(name) {
 }
 
 function cleanupSqliteFile(dbPath) {
-    if (fs.exists(dbPath)) {
-        fs.unlink(dbPath);
+    for (const file of [dbPath, ...sqliteSidecars(dbPath)]) {
+        if (fs.exists(file)) {
+            fs.unlink(file);
+        }
     }
 }
 
