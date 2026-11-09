@@ -137,27 +137,27 @@ call:
 
 ```sql
 CREATE TABLE fib_flow_meta (
-    meta_key   VARCHAR(64) PRIMARY KEY,
+    meta_key   VARCHAR(1024) PRIMARY KEY,  -- 768 on MySQL (InnoDB utf8mb4 limit)
     meta_value TEXT
 );
 ```
 
 Behaviour:
 
-- Fresh database → tables are created and `schema_version = 2` is written.
+- Fresh database → tables are created and `schema_version = 3` is written.
 - Matching version → `setup()` is a no-op.
 - Mismatched version, or an unmarked `fib_flow_tasks` table that already contains
   rows → `setup()` **throws** instead of degrading silently:
 
   ```
-  fib-flow schema v1 is not supported; expected v2.
+  fib-flow schema v2 is not supported; expected v3.
   Drop the fib_flow_* tables and re-run setup() to rebuild them.
   ```
 
 fib-flow does not migrate column layouts in place. Recreating the tables is the
 supported upgrade path, which is why the failure is explicit and loud.
 
-Schema v2 columns relevant to scheduling:
+Schema columns relevant to scheduling:
 
 | Column | Purpose |
 | --- | --- |
@@ -165,8 +165,9 @@ Schema v2 columns relevant to scheduling:
 | `cron_tz` | IANA time zone used to evaluate `cron_expr`; `NULL` means the process zone. |
 | `cron_catch_up` | `once` (default) or `skip`. |
 | `retention_expire_time` | Per-row retention window in seconds; `NULL` falls back to the global policy. |
+| `max_instances` | Spawn-mode overlap cap; `NULL` means "not configured" (the default of `1` applies), `0` means unlimited. Added in v3. |
 
-Indexes added with v2:
+Indexes:
 
 - `ux_task_cron_identity (name, cron_key)` — unique; enforces one row per schedule.
 - `idx_task_retention (status, last_active_time)` — backs the global retention sweep.

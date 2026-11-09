@@ -2,3 +2,5 @@ node_modules
 temp
 test.db*
 package-lock.json
+*.sqlite-wal
+*.sqlite-shm

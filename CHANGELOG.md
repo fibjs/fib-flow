@@ -2,39 +2,77 @@
 
 All notable changes to this project are documented in this file.
 
+## 8.3.0
+
+Schema v3, and the removal of an option-name compatibility layer that should never
+have existed.
+
+### ⚠️ Schema v3 — rebuild required
+
+`fib_flow_tasks` gained a `max_instances` column and `fib_flow_meta.meta_key` was
+widened. `setup()` on an older database now throws:
+
+```
+fib-flow schema v2 is not supported; expected v3.
+Drop the fib_flow_* tables and re-run setup() to rebuild them.
+```
+
+There is no in-place migration by design; dropping and recreating the tables is
+the supported upgrade path.
+
+- **`fib_flow_tasks.max_instances`** — the spawn-mode overlap cap moved off
+  `fib_flow_meta` and onto the schedule row. Keying it as
+  `schedule:<name>:<cronKey>` inside the key-value table overflowed `meta_key`
+  for realistic names: a 30-character name produced a 69-character key against
+  `VARCHAR(64)`, and the resulting primary-key violation surfaced as a bogus
+  "concurrency conflict" from an insert that had nothing to do with another
+  writer. The cap is a per-schedule attribute, so it belongs on the row.
+- **`fib_flow_meta.meta_key` widened** — `VARCHAR(1024)` on PostgreSQL,
+  `VARCHAR(768)` on MySQL (the InnoDB index limit at utf8mb4), unbounded `TEXT`
+  on SQLite. The old `VARCHAR(64)` was an arbitrary ceiling any caller could
+  reach; a key-value store must not impose one.
+
+### Removed
+
+- **Option-name normalisation.** `new TaskManager({ pollInterval: 20 })` and
+  `cron(..., { cron_key: 'eu' })` used to be rewritten onto the documented names
+  and logged. That layer is gone: an unrecognised key is simply not read, so the
+  default applies. It had to enumerate every option name twice — once snake_case,
+  once camelCase — and every new option had to be added to both lists or it would
+  silently stop working. A configuration key is either the documented one or a
+  typo, and `cron_key` in particular cannot be half-supported: it silently falls
+  back to `'default'`, which registers the schedule under a second identity.
+- **`setScheduleMaxInstances()` / `getScheduleMaxInstances()` on the adapter.**
+  Nothing read through them once the cap moved onto the schedule row; `cron()`
+  writes the column and the manager reads it from the row it already has.
+
+### Changed
+
+- **The schema gate trusts the version marker.** `setup()` used to also probe for
+  individual columns, which could only ever detect a hand-edited database — every
+  layout change already bumps the marker — and needed a second error message for
+  the contradictory case it invented. The unversioned branch now only applies to
+  an empty table.
+- **`getCronSchedules()[].max_instances` reports the effective cap** — `0` for
+  unlimited, otherwise the configured value, and the default of `1` when the
+  schedule configures none. It is a required field: a NULL column means "not
+  configured", and callers should not have to re-derive the default. The
+  `fib_flow_meta` sweep (`pruneScheduleMeta()` and its wiring into the retention
+  pass) is gone with the rows it used to collect.
+
 ## 8.2.0
 
 Batch task control, and a query surface that can express "anything unfinished".
 
 ### Added
 
-- **`cancelTasks(filters, options)`** — the batch counterpart of `cancelTask()`,
-  shaped like the existing `cancelCron()`. Cleaning up "everything still in flight
-  for this handler" previously meant `getTasks()` + a per-row `cancelTask()`, which
-  races with whatever creates new rows (for a spawn-mode schedule, the very next
-  tick) and cannot express "any non-terminal status" in SQL. `running` rows are
-  skipped and reported, never cancelled; at least one filter is required so a typo
-  cannot wipe the table.
-- **`getTasks({ statuses: [...] })`** — match any of several statuses. `status`
-  alone could not express "anything unfinished", so callers fetched every row and
-  filtered in memory, or issued one query per status. Supplying both `status` and
-  `statuses` is rejected: "this one" and "any of these" cannot both hold, and
-  guessing would hide the mistake. `getCronSchedules()` accepts the same pair.
-- **`getCronSchedules({ cronKey })`** — the schedule identity key was missing from
-  the filter while callers were already passing it, so it was silently ignored and
-  a caller asking for one schedule received every schedule of that name. With one
-  schedule per definition that is harmless; with several it is an arbitrary row
-  rather than an error.
+- **`cancelTasks(filters, options)`** — the batch counterpart of `cancelTask()`, shaped like the existing `cancelCron()`. Cleaning up "everything still in flight for this handler" previously meant `getTasks()` + a per-row `cancelTask()`, which races with whatever creates new rows (for a spawn-mode schedule, the very next tick) and cannot express "any non-terminal status" in SQL. `running` rows are skipped and reported, never cancelled; at least one filter is required so a typo cannot wipe the table.
+- **`getTasks({ statuses: [...] })`** — match any of several statuses. `status` alone could not express "anything unfinished", so callers fetched every row and filtered in memory, or issued one query per status. Supplying both `status` and `statuses` is rejected: "this one" and "any of these" cannot both hold, and guessing would hide the mistake. `getCronSchedules()` accepts the same pair.
+- **`getCronSchedules({ cronKey })`** — the schedule identity key was missing from the filter while callers were already passing it, so it was silently ignored and a caller asking for one schedule received every schedule of that name. With one schedule per definition that is harmless; with several it is an arbitrary row rather than an error.
 
 ### Fixed
 
-- **`cancelCron()` no longer aborts on a scheduling race.** It reads the rows, then
-  cancels them one by one. A spawn-mode schedule returns to `pending` immediately
-  after spawning and the claim loop can take it to `running` in between; when that
-  happened, `cancelTask()` rejected the row and the exception escaped `cancelCron()`
-  — the caller saw one throw instead of a per-row outcome, and the remaining rows
-  were never cancelled. Such a row is now counted as `skipped`, matching
-  `cancelTasks()`. (Present since 8.0.x; found because it flaked on MySQL.)
+- **`cancelCron()` no longer aborts on a scheduling race.** It reads the rows, then cancels them one by one. A spawn-mode schedule returns to `pending` immediately after spawning and the claim loop can take it to `running` in between; when that happened, `cancelTask()` rejected the row and the exception escaped `cancelCron()` — the caller saw one throw instead of a per-row outcome, and the remaining rows were never cancelled. Such a row is now counted as `skipped`, matching `cancelTasks()`. (Present since 8.0.x; found because it flaked on MySQL.)
 
 ## 8.1.0
 

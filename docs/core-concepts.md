@@ -245,9 +245,9 @@ Properties that hold in `spawn` mode:
   `runCronNow()` counts toward the same cap — a manual trigger is a run of this
   schedule — and throws when the cap is reached instead of silently skipping. Pass
   `{ ignoreMaxInstances: true }` to force one anyway.
-  The cap is persisted (in `fib_flow_meta`, so no schema change), which means it
-  survives a restart even on a tick that runs before the caller re-registers the
-  schedule. `getCronSchedules()[].max_instances` reports the effective value.
+  The cap is stored on the schedule row itself (`fib_flow_tasks.max_instances`),
+  so it survives a restart even on a tick that runs before the caller re-registers
+  the schedule. `getCronSchedules()[].max_instances` reports the effective value.
   **Omitting the option on a later `cron()` keeps the stored value** — `cron()` is
   an idempotent upsert, so an absent field means "leave it alone". Pass `null` to
   reset to the default, `0` for unlimited.
